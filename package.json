@@ -1,0 +1,26 @@
+{
+  "name": "dealhunter",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3100",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1 --port 3100",
+    "typecheck": "tsc --noEmit",
+    "verify:auth": "node scripts/verify-auth.mjs",
+    "backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-backend.ps1",
+    "demo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-demo.ps1"
+  },
+  "dependencies": {
+    "jose": "6.2.15",
+    "next": "16.4.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2"
+  }
+}

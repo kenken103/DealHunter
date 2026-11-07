@@ -1,0 +1,47 @@
+.dh-login-shell{min-height:100svh;background:#f7f8fa;color:#19253c}
+.dh-login-header{height:62px;background:#15369a;color:#fff}
+.dh-login-header-inner{height:100%;max-width:1710px;margin:auto;padding:0 clamp(24px,3.2vw,60px);display:flex;align-items:center;justify-content:space-between;gap:20px}
+.dh-login-brand{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.dh-login-brand img{display:block;flex:none}
+.dh-login-brand>span{font-family:Arial,"DejaVu Sans",sans-serif;font-size:30px;letter-spacing:-1.85px;font-style:italic;font-weight:800;line-height:1}
+.dh-login-header-caption{font-size:11px;letter-spacing:.07em;color:#d7e1ff}
+main.dh-login-main{max-width:none;min-height:calc(100svh - 62px);margin:0;padding:36px 20px 24px;display:flex;flex-direction:column;justify-content:center;align-items:center}
+.dh-login-card{position:relative;width:100%;max-width:440px;padding:30px 34px 28px;background:#fff;border:1px solid #cbd3e0;border-top:3px solid #193eab;border-radius:4px;box-shadow:0 6px 24px #172c5009}
+.dh-login-eyebrow{font-size:11px;color:#375991;font-weight:600;letter-spacing:.03em}
+.dh-login-heading h1{font-size:27px;line-height:1.5;letter-spacing:.02em;margin-top:4px;color:#11223f}
+.dh-login-description{font-size:12px;line-height:1.9;color:#66738a;margin-top:7px}
+.dh-login-mobile-break{display:none}
+.dh-login-form{display:grid;gap:17px;margin-top:25px}
+.dh-login-field{display:grid;gap:6px;min-width:0}
+.dh-login-field>label{font-size:12px;color:#344866;font-weight:600}
+.dh-login-field input{width:100%;min-width:0;height:44px;padding:10px 12px;border:1px solid #bdc9db;border-radius:3px;background:#fff;font-size:14px;line-height:1.5;color:#253b5b}
+.dh-login-field input::placeholder{color:#8b96a8}
+.dh-login-field input:focus-visible{outline:2px solid #4f75db;outline-offset:2px}
+.dh-login-password{position:relative;min-width:0}
+.dh-login-password input{padding-right:57px}
+.dh-login-password button{position:absolute;inset:3px 3px 3px auto;min-width:47px;padding:0 8px;font-size:11px;color:#375991;border-radius:2px}
+.dh-login-password button:hover{background:#edf2ff}
+.dh-login-submit{display:flex;align-items:center;justify-content:center;position:relative;gap:12px;width:100%;min-height:44px;margin-top:3px;padding:10px 16px;border:1px solid #dfbc24;border-radius:3px;background:#ffdc38;color:#172a53;font-size:14px;font-weight:700}
+.dh-login-submit>span{position:absolute;right:15px;font-size:19px;line-height:1;font-weight:500}
+.dh-login-submit:hover{background:#ffe361}
+.dh-login-submit:disabled{cursor:wait;opacity:.7}
+.dh-login-routing-note{text-align:center;margin-top:17px;color:#66738a;font-size:11px;line-height:1.8}
+.dh-login-error{padding:10px 12px;border:1px solid #ebc1bd;border-left:3px solid #a52d24;border-radius:2px;color:#862a24;background:#fff5f4;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.dh-login-demo{margin-top:25px;padding-top:19px;border-top:1px solid #e0e5ee}
+.dh-login-demo-heading{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.dh-login-demo-heading>span{font-size:12px;font-weight:650;color:#344866}
+.dh-login-demo-heading>small{font-size:10px;color:#78869b}
+.dh-login-demo-accounts{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}
+.dh-login-demo-accounts>button{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 3px;align-content:center;min-width:0;min-height:72px;padding:10px 12px;border:1px solid #d4ddec;border-radius:3px;text-align:left;background:#f8faff}
+.dh-login-demo-accounts>button:hover{background:#edf2ff;border-color:#8fa7d6}
+.dh-login-demo-role{grid-column:1;font-size:10px;color:#31599f;font-weight:650;white-space:nowrap}
+.dh-login-demo-engineer{color:#616543}
+.dh-login-demo-accounts>.dh-login-demo-leader-card{grid-column:1/-1;min-height:62px;background:#fffcef;border-color:#e7dca8}
+.dh-login-demo-accounts strong{grid-column:1;font-size:12px;font-weight:600;color:#293e60}
+.dh-login-demo-accounts>button>span:last-child{grid-column:2;grid-row:1/3;align-self:center;color:#7387a7;font-size:14px}
+.dh-login-demo-note{margin-top:11px;font-size:10px;line-height:1.8;color:#78869b}
+.dh-login-footer{margin-top:19px;color:#8a95a6;font-size:10px;letter-spacing:.03em}
+.dh-login-announcement{position:absolute;overflow:hidden;width:1px;height:1px;clip-path:inset(50%);white-space:nowrap}
+.dh-login-engineer-picker{display:grid;grid-template-columns:1fr 125px;align-items:center;gap:10px;font-size:10px;color:#566378;margin-top:12px}.dh-login-engineer-picker select{min-width:0;border:1px solid #bdc9db;border-radius:3px;background:#fff;padding:6px;font-size:12px;min-height:36px}
+@media(max-width:650px){.dh-login-header-inner{padding:0 18px;gap:10px}.dh-login-brand img{width:30px;height:30px}.dh-login-brand>span{font-size:25px}.dh-login-header-caption{font-size:9px;letter-spacing:0}.dh-login-header{height:58px}main.dh-login-main{min-height:calc(100svh - 58px);padding:24px 16px 20px}.dh-login-card{padding:25px 23px 23px}.dh-login-heading h1{font-size:25px}.dh-login-form{margin-top:21px;gap:16px}.dh-login-field input{font-size:16px}.dh-login-demo{margin-top:22px;padding-top:17px}.dh-login-description{font-size:11.5px}.dh-login-demo-accounts>button{padding:10px;min-height:69px}.dh-login-footer{margin-top:15px}}
+@media(max-width:359px){.dh-login-header-caption{display:none}.dh-login-card{padding:23px 18px}.dh-login-demo-accounts{gap:7px}.dh-login-demo-accounts>button{padding:8px}.dh-login-mobile-break{display:block}}

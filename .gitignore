@@ -1,0 +1,18 @@
+node_modules/
+.next/
+.local/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+backend/lib/*.jar
+backend/out/
+backend/build/
+
+# Local input archive and verification images may contain user data.
+ses-interview-codex.zip
+docs/screenshots/
+
+*.log
+Thumbs.db
+.DS_Store
