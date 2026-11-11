@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./readability.css";
 
 export const metadata: Metadata = {
   title: "DealHunter｜面談・入場予定",

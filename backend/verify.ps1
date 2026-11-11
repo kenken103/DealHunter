@@ -46,7 +46,22 @@ foreach ($question in $data.questions) {
 foreach ($request in $data.requests) {
     Assert-Demo ($request.id -and $request.projectId -and ($studentIds -contains $request.studentId)) 'Request/student association is invalid.'
     Assert-Demo ($request.status -in @('requested','responded','confirmed')) 'Request status is invalid.'
-    Assert-Demo (@($request.candidates).Count -gt 0) 'Request candidates are missing.'
+    Assert-Demo ($request.scheduleMode -in @('candidates','availability')) 'Request schedule mode is invalid.'
+    Assert-Demo ($null -ne $request.requestedDates) 'Request date constraints are missing.'
+    if ($request.scheduleMode -eq 'availability' -and $request.status -eq 'requested') {
+        Assert-Demo (@($request.candidates).Count -eq 0) 'An unanswered availability inquiry already has proposed times.'
+    } else {
+        Assert-Demo (@($request.candidates).Count -gt 0) 'Request candidates or availability proposals are missing.'
+    }
+    if ($request.scheduleMode -eq 'candidates') { Assert-Demo (@($request.requestedDates).Count -eq 0) 'Fixed candidates must not have separate date constraints.' }
+    foreach ($slot in $request.candidates) {
+        Assert-Demo ($slot.start -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$') 'Candidate start is invalid.'
+        Assert-Demo ($null -eq $slot.end -or ($slot.end -gt $slot.start -and $slot.end.Substring(0,10) -eq $slot.start.Substring(0,10))) 'Candidate end must be absent or later on the same date.'
+        if ($request.scheduleMode -eq 'availability') {
+            Assert-Demo ($null -eq $slot.end -and $request.availableSlotIds -contains $slot.id) 'Availability proposals must have only a start and be available.'
+            Assert-Demo (@($request.requestedDates).Count -eq 0 -or $request.requestedDates -contains $slot.start.Substring(0,10)) 'An availability proposal is outside the requested dates.'
+        }
+    }
     $candidateIds = @($request.candidates | ForEach-Object { $_.id })
     foreach ($slotId in $request.availableSlotIds) { Assert-Demo ($candidateIds -contains $slotId) 'Available slot belongs to another request.' }
     if ($request.status -eq 'confirmed') { Assert-Demo (@($request.availableSlotIds) -contains $request.confirmedSlotId) 'Confirmed slot was not answered as available.' }

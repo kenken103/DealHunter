@@ -111,7 +111,7 @@ try {
 
 try {
     $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/health' -TimeoutSec 2 -DisableKeepAlive
-    if ($health.service -eq 'dealhunter' -and $health.status -eq 'ok' -and $health.version -eq 'workflow-v6' -and -not $Restart) {
+    if ($health.service -eq 'dealhunter' -and $health.status -eq 'ok' -and $health.version -eq 'workflow-v7' -and -not $Restart) {
         Write-Output 'DealHunter Java API already running: http://127.0.0.1:8080'
         return
     }
@@ -148,7 +148,7 @@ for ($attempt = 0; $attempt -lt 30; $attempt++) {
     Start-Sleep -Milliseconds 300
     try {
         $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/health' -TimeoutSec 1 -DisableKeepAlive
-        if ($health.service -eq 'dealhunter' -and $health.status -eq 'ok' -and $health.version -eq 'workflow-v6') {
+        if ($health.service -eq 'dealhunter' -and $health.status -eq 'ok' -and $health.version -eq 'workflow-v7') {
             Write-Output 'DealHunter Java API ready: http://127.0.0.1:8080 (PostgreSQL port 55432)'
             return
         }

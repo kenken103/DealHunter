@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS interview_requests (
  id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id), student_id text NOT NULL REFERENCES app_users(id),
  status text NOT NULL CHECK (status IN ('requested','responded','confirmed')), confirmed_slot_id text, created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS schedule_mode text NOT NULL DEFAULT 'candidates' CHECK (schedule_mode IN ('candidates','availability'));
+ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS requested_dates date[] NOT NULL DEFAULT '{}' CHECK (array_position(requested_dates,NULL) IS NULL AND (schedule_mode='availability' OR cardinality(requested_dates)=0));
 CREATE TABLE IF NOT EXISTS request_attachments (
  request_id text PRIMARY KEY REFERENCES interview_requests(id) ON DELETE CASCADE,
  filename text NOT NULL,
@@ -78,9 +80,12 @@ CREATE TABLE IF NOT EXISTS request_attachments (
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS candidate_slots (
- id text PRIMARY KEY, request_id text NOT NULL REFERENCES interview_requests(id), start_at timestamp NOT NULL, end_at timestamp NOT NULL,
+ id text PRIMARY KEY, request_id text NOT NULL REFERENCES interview_requests(id), start_at timestamp NOT NULL, end_at timestamp,
  available boolean NOT NULL DEFAULT false, CHECK (end_at > start_at AND end_at::date = start_at::date)
 );
+-- Keep existing durations; newly supplied start-only candidates have no assumed end.
+ALTER TABLE candidate_slots ALTER COLUMN end_at DROP NOT NULL;
+CREATE INDEX IF NOT EXISTS candidate_slots_request_idx ON candidate_slots(request_id,start_at);
 ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS request_id text REFERENCES interview_requests(id);
 ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS meeting_url text NOT NULL DEFAULT '';
 ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS meeting_place text NOT NULL DEFAULT '';

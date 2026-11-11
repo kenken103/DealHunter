@@ -237,7 +237,7 @@ export default function Dashboard() {
       <section className="file-section">
         <h3>{event.entry ? "初回入場の予定" : "面談の予定"}</h3>
         <Facts rows={[
-          [event.entry ? "集合時刻" : "日時", <>{dateText(event.stamp)}<br /><span className="fact-time">{event.time}{event.end ? ` – ${event.end}` : " 集合"}</span></>],
+          [event.entry ? "集合時刻" : "開始日時", <>{dateText(event.stamp)}<br /><span className="fact-time">{event.time}{event.entry ? " 集合" : ""}</span></>],
           ["面談者", event.person],
           ["参画者", event.participantName || "未登録"],
           ["参画者(ひらがな)", event.participantNameKana || "未登録"],
@@ -250,7 +250,7 @@ export default function Dashboard() {
       </section>
       {event.entry && <section className="file-section"><h3>当日の案内</h3><p className="body-copy sales-preserve-lines">{event.guidance || "当日の案内は未登録です。"}</p></section>}
       {event.entry && source && <section className="file-section sales-original-interview"><h3>元の面談</h3><Facts rows={[
-        ["日時", <>{dateText(source.stamp)}<br /><span className="fact-time">{source.time}{source.end ? ` – ${source.end}` : ""}</span></>],
+        ["開始日時", <>{dateText(source.stamp)}<br /><span className="fact-time">{source.time}</span></>],
         ["面談区分", source.route],
         ["面談URL", <MeetingUrl url={source.url} />],
         ["面談所感", submittedFeedback ? "提出済み" : "未提出"],

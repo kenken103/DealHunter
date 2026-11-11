@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.*;
 import java.text.Normalizer;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.*;
@@ -29,7 +30,7 @@ public final class DealHunterServer {
     private static final String DATABASE_USER = env("DEALHUNTER_DATABASE_USER", "dealhunter");
     private static final String DATABASE_PASSWORD = env("DEALHUNTER_DATABASE_PASSWORD", "");
     private static final String API_KEY = env("DEALHUNTER_API_KEY", "");
-    private static final String API_VERSION = "workflow-v6";
+    private static final String API_VERSION = "workflow-v7";
     private static String dashboardSql;
     private record User(String id, String role, String name) {}
     private record Slot(LocalDateTime start, LocalDateTime end) {}
@@ -103,6 +104,47 @@ public final class DealHunterServer {
     private static LocalDateTime date(String value) {
         try { return LocalDateTime.parse(value); }
         catch (DateTimeParseException e) { throw new ApiError(400, "日時は日本時間の年月日・時刻で入力してください。"); }
+    }
+    private static List<LocalDate> requestedDates(JsonNode value) {
+        if (value == null) return List.of();
+        require(value.isArray(),400,"指定日は日付の一覧で入力してください。");
+        Set<LocalDate> dates = new TreeSet<>();
+        for (JsonNode item : value) {
+            require(item.isTextual() && item.asText().matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"),400,"指定日は年月日で入力してください。");
+            LocalDate day;
+            try { day = LocalDate.parse(item.asText()); }
+            catch (DateTimeParseException e) { throw new ApiError(400,"指定日が正しくありません。"); }
+            require(day.getYear() > 0,400,"指定日が正しくありません。");
+            require(dates.add(day),400,"指定日が重複しています。");
+        }
+        return List.copyOf(dates);
+    }
+    private static Set<LocalDate> storedRequestedDates(Map<String,Object> request) throws SQLException {
+        java.sql.Array array = (java.sql.Array) request.get("requested_dates");
+        try {
+            Set<LocalDate> dates = new HashSet<>();
+            for (Object value : (Object[]) array.getArray()) dates.add(LocalDate.parse(value.toString()));
+            return dates;
+        } finally { array.free(); }
+    }
+    private static List<Slot> slots(JsonNode value, boolean proposals) {
+        require(value != null && value.isArray() && !value.isEmpty(),400,proposals ? "参加可能な開始日時を1件以上入力してください。" : "候補日時を1件以上入力してください。");
+        List<Slot> slots = new ArrayList<>();
+        Set<LocalDateTime> seen = new HashSet<>();
+        for (JsonNode item : value) {
+            require(item.isObject(),400,"候補日時の形式が正しくありません。");
+            require(!proposals || !item.has("end"),400,"参加可能な日時は開始日時だけを入力してください。");
+            LocalDateTime start = date(text(item,"start"));
+            LocalDateTime end = item.hasNonNull("end") ? date(text(item,"end")) : null;
+            require(end == null || (end.isAfter(start) && start.toLocalDate().equals(end.toLocalDate())),400,"候補の終了時刻は同日の開始時刻より後にしてください。");
+            require(seen.add(start),400,"候補日時が重複しています。");
+            slots.add(new Slot(start,end));
+        }
+        slots.sort(Comparator.comparing(Slot::start));
+        return slots;
+    }
+    private static String slotLabel(Slot slot) {
+        return slot.start.toString().replace('T',' ') + (slot.end == null ? "" : "〜" + slot.end.toLocalTime());
     }
     private static String httpUrl(String value) {
         try {
@@ -210,29 +252,30 @@ public final class DealHunterServer {
             leader=one(c,"SELECT display_name FROM app_users WHERE id=? AND role='leader'",leaderId);
             require(leader!=null,400,"担当リーダーとして登録された利用者を選んでください。");
         }
+        String scheduleMode = body.has("scheduleMode") ? text(body,"scheduleMode") : "candidates";
+        require(scheduleMode.equals("candidates") || scheduleMode.equals("availability"),400,"日程の確認方法が正しくありません。");
+        require(!body.has("proposals") && !body.has("slotIds"),400,"依頼作成時に回答は指定できません。");
+        List<LocalDate> requestedDates = requestedDates(body.get("requestedDates"));
         JsonNode candidates = body.get("candidates");
-        require(candidates != null && candidates.isArray() && !candidates.isEmpty(),400,"候補日時を1件以上入力してください。");
-        List<Slot> slots = new ArrayList<>();
-        Set<LocalDateTime> seen = new HashSet<>();
-        for (JsonNode n : candidates) {
-            LocalDateTime start = date(text(n,"start")), end = date(text(n,"end"));
-            require(end.isAfter(start) && start.toLocalDate().equals(end.toLocalDate()),400,"候補の終了時刻は同日の開始時刻より後にしてください。");
-            require(seen.add(start),400,"候補日時が重複しています。");
-            slots.add(new Slot(start,end));
-        }
-        slots.sort(Comparator.comparing(Slot::start));
+        boolean availability = scheduleMode.equals("availability");
+        require(availability || requestedDates.isEmpty(),400,"指定日を選ぶ場合は参加可能な日時を確認する方法を選んでください。");
+        require(!availability || candidates == null || (candidates.isArray() && candidates.isEmpty()),400,"参加可能な日時を確認する依頼には固定の候補日時を指定できません。");
+        List<Slot> slots = availability ? List.of() : slots(candidates,false);
         String projectId=id("DH-");
         execute(c,"INSERT INTO projects(id,name,sales_id,notes,leader_id,participant_name,participant_name_kana) VALUES(?,?,?,?,?,?,?)",projectId,project,user.id,summary,leaderId.isEmpty()?null:leaderId,participantName,participantNameKana);
         if(attachment!=null) execute(c,"INSERT INTO project_attachments(project_id,filename,content) VALUES(?,?,?)",projectId,attachment.name(),attachment.content());
-        String times = String.join(" ／ ",slots.stream().map(s -> s.start.toString().replace('T',' ') + "〜" + s.end.toLocalTime()).toList());
+        String times = availability
+            ? (requestedDates.isEmpty() ? "日時の指定なし。参加可能な開始日時を回答してください。" : String.join(" ／ ",requestedDates.stream().map(LocalDate::toString).toList()) + " の参加可能な開始日時を回答してください。")
+            : String.join(" ／ ",slots.stream().map(DealHunterServer::slotLabel).toList());
+        String datesArray = "{" + String.join(",",requestedDates.stream().map(LocalDate::toString).toList()) + "}";
         List<String> requestIds=new ArrayList<>();
         List<Map<String,Object>> previews=new ArrayList<>();
         for(var member:students.entrySet()) {
             String requestId=id("R-");
-            execute(c,"INSERT INTO interview_requests(id,project_id,student_id,status) VALUES(?,?,?,'requested')",requestId,projectId,member.getKey());
+            execute(c,"INSERT INTO interview_requests(id,project_id,student_id,status,schedule_mode,requested_dates) VALUES(?,?,?,'requested',?,?::date[])",requestId,projectId,member.getKey(),scheduleMode,datesArray);
             for(Slot slot:slots) execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at) VALUES(?,?,?,?)",id("S-"),requestId,slot.start,slot.end);
             requestIds.add(requestId);
-            previews.add(preview(c,projectId,member.getKey(),"lark","面談依頼の通知内容",List.of(line("宛先","面談連絡グループ"),line("メンション","@"+member.getValue()),line("案件",project),line("概要",summary),line("候補日時",times),line("面談ページ","http://127.0.0.1:3100/engineer?request="+requestId)),"面談依頼が来ました。概要を確認し、営業へ参加可能な日時を回答してください。外部送信は行っていません。"));
+            previews.add(preview(c,projectId,member.getKey(),"lark","面談依頼の通知内容",List.of(line("宛先","面談連絡グループ"),line("メンション","@"+member.getValue()),line("案件",project),line("概要",summary),line(availability?"日程の確認":"候補日時",times),line("面談ページ","http://127.0.0.1:3100/engineer?request="+requestId)),"面談依頼が来ました。概要を確認し、営業へ参加可能な日時を回答してください。外部送信は行っていません。"));
         }
         Map<String,Object> response=new LinkedHashMap<>();
         response.put("message",students.size()+"名への面談依頼を保存しました。");
@@ -250,17 +293,31 @@ public final class DealHunterServer {
     private static Object respondRequest(Connection c, User user, String requestId, JsonNode body) throws Exception {
         Map<String,Object> r = request(c,user,requestId,"student");
         require(!str(r,"status").equals("confirmed"),409,"日時確定後は候補を変更できません。");
-        JsonNode selected = body.get("slotIds");
-        require(selected != null && selected.isArray() && !selected.isEmpty(),400,"参加可能な候補を1件以上選んでください。");
-        Set<String> ids = new LinkedHashSet<>();
-        for (JsonNode n : selected) {
-            require(n.isTextual() && ids.add(n.asText()),400,"候補日時の選択が正しくありません。");
-            require(one(c,"SELECT id FROM candidate_slots WHERE id=? AND request_id=?",n.asText(),requestId) != null,400,"この依頼の候補から選んでください。");
+        String answer;
+        if (str(r,"schedule_mode").equals("availability")) {
+            require(!body.has("slotIds") && !body.has("candidates"),400,"参加可能な開始日時を入力して回答してください。");
+            List<Slot> proposed = slots(body.get("proposals"),true);
+            Set<LocalDate> requestedDates = storedRequestedDates(r);
+            for (Slot slot : proposed) require(requestedDates.isEmpty() || requestedDates.contains(slot.start.toLocalDate()),400,"依頼で指定された日の開始日時を入力してください。");
+            // The request row stays locked through replacement and revision update.
+            execute(c,"DELETE FROM candidate_slots WHERE request_id=?",requestId);
+            for (Slot slot : proposed) execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at,available) VALUES(?,?,?,NULL,true)",id("S-"),requestId,slot.start);
+            answer = String.join(" ／ ",proposed.stream().map(DealHunterServer::slotLabel).toList());
+        } else {
+            require(!body.has("proposals") && !body.has("candidates"),400,"依頼された候補日時から選んで回答してください。");
+            JsonNode selected = body.get("slotIds");
+            require(selected != null && selected.isArray() && !selected.isEmpty(),400,"参加可能な候補を1件以上選んでください。");
+            Set<String> ids = new LinkedHashSet<>();
+            for (JsonNode n : selected) {
+                require(n.isTextual() && ids.add(n.asText()),400,"候補日時の選択が正しくありません。");
+                require(one(c,"SELECT id FROM candidate_slots WHERE id=? AND request_id=?",n.asText(),requestId) != null,400,"この依頼の候補から選んでください。");
+            }
+            execute(c,"UPDATE candidate_slots SET available=false WHERE request_id=?",requestId);
+            for (String slotId : ids) execute(c,"UPDATE candidate_slots SET available=true WHERE id=? AND request_id=?",slotId,requestId);
+            answer = ids.size()+"件";
         }
-        execute(c,"UPDATE candidate_slots SET available=false WHERE request_id=?",requestId);
-        for (String slotId : ids) execute(c,"UPDATE candidate_slots SET available=true WHERE id=? AND request_id=?",slotId,requestId);
         execute(c,"UPDATE interview_requests SET status='responded',task_revision=task_revision+1 WHERE id=?",requestId);
-        var p=preview(c,str(r,"project_id"),str(r,"sales_id"),"lark","候補日時への回答",List.of(line("メンション","@青木 美咲"),line("受講者",user.name),line("案件",str(r,"project_name")),line("参加可能な候補",ids.size()+"件"),line("面談ページ","http://127.0.0.1:3100/sales?request="+requestId)),"受講者から回答が届きました。先方と調整し、面談日時を確定してください。外部送信は行っていません。");
+        var p=preview(c,str(r,"project_id"),str(r,"sales_id"),"lark","候補日時への回答",List.of(line("メンション","@青木 美咲"),line("受講者",user.name),line("案件",str(r,"project_name")),line("参加可能な候補",answer),line("面談ページ","http://127.0.0.1:3100/sales?request="+requestId)),"受講者から回答が届きました。先方と調整し、面談日時を確定してください。外部送信は行っていません。");
         return Map.of("message","参加可能な候補を保存しました。","preview",p);
     }
     private static Object confirmRequest(Connection c, User user, String requestId, JsonNode body) throws Exception {
@@ -270,11 +327,12 @@ public final class DealHunterServer {
         String slotId=text(body,"slotId"), url=httpUrl(text(body,"url"));
         Map<String,Object> slot=one(c,"SELECT * FROM candidate_slots WHERE id=? AND request_id=? AND available",slotId,requestId);
         require(slot!=null,400,"受講者が参加可能と回答した候補を選んでください。");
-        LocalDateTime start=((Timestamp)slot.get("start_at")).toLocalDateTime(), end=((Timestamp)slot.get("end_at")).toLocalDateTime();
+        LocalDateTime start=((Timestamp)slot.get("start_at")).toLocalDateTime();
+        LocalDateTime end=slot.get("end_at")==null?null:((Timestamp)slot.get("end_at")).toLocalDateTime();
         String eventId=id("E-");
-        execute(c,"INSERT INTO scheduled_events(id,project_id,student_id,event_date,start_time,end_time,kind,route,format,request_id,meeting_url) VALUES(?,?,?,?,?,?,'meet','一次面談','オンライン',?,?)",eventId,r.get("project_id"),r.get("student_id"),start.toLocalDate(),start.toLocalTime(),end.toLocalTime(),requestId,url);
+        execute(c,"INSERT INTO scheduled_events(id,project_id,student_id,event_date,start_time,end_time,kind,route,format,request_id,meeting_url) VALUES(?,?,?,?,?,?,'meet','一次面談','オンライン',?,?)",eventId,r.get("project_id"),r.get("student_id"),start.toLocalDate(),start.toLocalTime(),end==null?null:end.toLocalTime(),requestId,url);
         execute(c,"UPDATE interview_requests SET status='confirmed',confirmed_slot_id=? WHERE id=?",slotId,requestId);
-        var p=preview(c,str(r,"project_id"),str(r,"student_id"),"calendar","面談予定の登録内容",List.of(line("案件",str(r,"project_name")),line("参加者",str(r,"person")),line("面談日時",start.toString().replace('T',' ')+"〜"+end.toLocalTime()),line("面談URL",url),line("面談ページ","http://127.0.0.1:3100/engineer?event="+eventId)),"面談日時を確定しました。Larkカレンダーへの実際の登録は行っていません。");
+        var p=preview(c,str(r,"project_id"),str(r,"student_id"),"calendar","面談予定の登録内容",List.of(line("案件",str(r,"project_name")),line("参加者",str(r,"person")),line("面談日時",slotLabel(new Slot(start,end))),line("面談URL",url),line("面談ページ","http://127.0.0.1:3100/engineer?event="+eventId)),"面談日時を確定しました。Larkカレンダーへの実際の登録は行っていません。");
         return Map.of("message","面談日時とURLを保存しました。","eventId",eventId,"preview",p);
     }
     private static Object submitFeedback(Connection c, User user, String eventId, JsonNode body) throws Exception {

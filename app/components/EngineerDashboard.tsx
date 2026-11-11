@@ -18,7 +18,8 @@ const dateTimeLabel = (value: string) => {
   const date = jstDate(value);
   return Number.isNaN(date.getTime()) ? value.replace("T", " ") : new Intl.DateTimeFormat("ja-JP", { month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" }).format(date);
 };
-const slotLabel = (start: string, end: string) => `${dateTimeLabel(start)} 〜 ${Number.isNaN(jstDate(end).getTime()) ? end : new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" }).format(jstDate(end))}`;
+const slotLabel = (start: string, end: string | null) => end ? `${dateTimeLabel(start)} 〜 ${Number.isNaN(jstDate(end).getTime()) ? end : new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" }).format(jstDate(end))}` : dateTimeLabel(start);
+const requestedDateLabel = (value: string) => dateLabel(Date.parse(`${value}T00:00:00Z`));
 function previewValue(value: string) {
   const local = value.match(/^(?:http:\/\/(?:127\.0\.0\.1|localhost):3100)?(\/(?:engineer|sales)(?:\?[^\s]*)?)$/);
   return local ? <a href={local[1]}>{value}</a> : value;
@@ -68,10 +69,67 @@ function PreviewModal({ preview, onClose }: { preview: NotificationPreview | nul
   </dialog>;
 }
 
-function RequestResponse({ request, pending, onSave }: { request: InterviewRequest; pending: boolean; onSave: (path: string, payload: object) => Promise<boolean> }) {
+type ResponseProps = { request: InterviewRequest; pending: boolean; onSave: (path: string, payload: object) => Promise<boolean> };
+type AvailabilityDraft = { key: number; date: string; time: string };
+
+function AvailabilityResponse({ request, pending, onSave }: ResponseProps) {
+  const dates = request.requestedDates ?? [];
+  const [drafts, setDrafts] = useState<AvailabilityDraft[]>(() => {
+    const answers = request.candidates.filter(slot => request.availableSlotIds.includes(slot.id));
+    return answers.length ? answers.map((slot, key) => ({ key, date: slot.start.slice(0, 10), time: slot.start.slice(11, 16) })) : [{ key: 0, date: dates[0] ?? "", time: "" }];
+  });
+  const sequence = useRef(drafts.length);
+  const dateFields = useRef(new Map<number, HTMLInputElement | HTMLSelectElement>());
+  const [error, setError] = useState("");
+
+  function addDraft() {
+    const key = sequence.current++;
+    setDrafts(current => [...current, { key, date: dates[0] ?? "", time: "" }]);
+    requestAnimationFrame(() => dateFields.current.get(key)?.focus());
+  }
+  function removeDraft(key: number) {
+    const next = drafts.filter(draft => draft.key !== key);
+    setDrafts(next);
+    requestAnimationFrame(() => dateFields.current.get(next[0]?.key)?.focus());
+  }
+  function updateDraft(key: number, field: "date" | "time", value: string) {
+    setDrafts(current => current.map(draft => draft.key === key ? { ...draft, [field]: value } : draft));
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const proposals = drafts.map(draft => ({ start: `${String(form.get(`date-${draft.key}`) ?? "")}T${String(form.get(`time-${draft.key}`) ?? "")}` }));
+    if (!proposals.length || proposals.some(slot => !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(slot.start))) { setError("都合のよい日付と開始時刻を入力してください。"); return; }
+    if (new Set(proposals.map(slot => slot.start)).size !== proposals.length) { setError("同じ候補日時が重複しています。"); return; }
+    if (dates.length && proposals.some(slot => !dates.includes(slot.start.slice(0, 10)))) { setError("営業から指定された日付を選択してください。"); return; }
+    setError("");
+    await onSave(`/api/workflow/requests/${encodeURIComponent(request.id)}/respond`, { proposals });
+  }
+
+  return <form className="dh-engineer-response" onSubmit={submit}>
+    <fieldset disabled={pending} aria-describedby="availability-response-note">
+      <legend>都合のよい日時を回答</legend>
+      <p id="availability-response-note" className="dh-engineer-small">{dates.length ? `営業から指定された日付：${dates.map(requestedDateLabel).join("、")}。この中で参加できる開始時刻を入力してください。` : "営業から日付・時刻の指定はありません。参加できる日付と開始時刻を入力してください。"}複数の候補を送信できます。日時確定前は回答を変更できます。時刻は日本時間です。</p>
+      <div className="dh-engineer-proposals">{drafts.map((draft, index) => <div className="dh-engineer-proposal" key={draft.key}>
+        <p>候補 {index + 1}</p>
+        <div className="dh-engineer-proposal-fields">
+          <label>日付{dates.length ? <select ref={element => { if (element) dateFields.current.set(draft.key, element); else dateFields.current.delete(draft.key); }} name={`date-${draft.key}`} required value={draft.date} aria-label={`候補${index + 1}の日付`} onChange={e => updateDraft(draft.key, "date", e.currentTarget.value)}>{dates.map(date => <option key={date} value={date}>{requestedDateLabel(date)}</option>)}</select> : <input ref={element => { if (element) dateFields.current.set(draft.key, element); else dateFields.current.delete(draft.key); }} type="date" name={`date-${draft.key}`} required value={draft.date} aria-label={`候補${index + 1}の日付`} onInput={e => updateDraft(draft.key, "date", e.currentTarget.value)} onChange={e => updateDraft(draft.key, "date", e.currentTarget.value)} />}</label>
+          <label>開始時刻<input type="time" name={`time-${draft.key}`} required value={draft.time} aria-label={`候補${index + 1}の開始時刻`} onInput={e => updateDraft(draft.key, "time", e.currentTarget.value)} onChange={e => updateDraft(draft.key, "time", e.currentTarget.value)} /></label>
+        </div>
+        <button type="button" className="dh-engineer-proposal-remove" aria-label={`候補${index + 1}を削除`} disabled={drafts.length === 1} onClick={() => removeDraft(draft.key)}><Icon name="x" />削除</button>
+      </div>)}</div>
+      <button type="button" className="dh-engineer-secondary" onClick={addDraft}><Icon name="plus" />候補日時を追加</button>
+    </fieldset>
+    {error && <p className="dh-engineer-error" role="alert">{error}</p>}
+    <button type="submit" className="dh-engineer-primary" disabled={pending}>{pending ? "回答を保存中…" : request.status === "responded" ? "候補日時を更新する" : "この日時で回答する"}<Icon name="arrow" /></button>
+  </form>;
+}
+
+function RequestResponse({ request, pending, onSave }: ResponseProps) {
   const [selected, setSelected] = useState<string[]>(request.availableSlotIds);
   const [error, setError] = useState("");
   const confirmed = request.status === "confirmed";
+  if (request.scheduleMode === "availability" && !confirmed) return <AvailabilityResponse request={request} pending={pending} onSave={onSave} />;
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const slotIds = new FormData(event.currentTarget).getAll("slots").map(String);
@@ -86,6 +144,12 @@ function RequestResponse({ request, pending, onSave }: { request: InterviewReque
     {error && <p className="dh-engineer-error" role="alert">{error}</p>}
     {!confirmed && <button type="submit" className="dh-engineer-primary" disabled={pending}>{pending ? "回答を保存中…" : request.status === "responded" ? "回答を更新する" : "選択した日時で回答する"}<Icon name="arrow" /></button>}
   </form>;
+}
+
+function requestSummary(request: InterviewRequest) {
+  if (request.status === "confirmed") return "面談日時が確定しました";
+  if (request.scheduleMode === "availability") return request.status === "requested" ? "都合のよい日時を回答してください" : `${request.availableSlotIds.length}件の候補日時を回答済み`;
+  return `${request.candidates.length}件の候補日時${request.status === "responded" ? `・${request.availableSlotIds.length}件を回答済み` : ""}`;
 }
 
 function FeedbackForm({ event, pending, onSave }: { event: ScheduleEvent; pending: boolean; onSave: (path: string, payload: object) => Promise<boolean> }) {
@@ -336,7 +400,7 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
         <span className={`dh-engineer-badge ${event.entry ? "is-entry" : awaitingSales(event) ? "is-waiting is-feedback-waiting" : ""}`}>{event.entry ? entered ? "入場中" : "初回入場　確定" : `${event.route}　${reference && event.engineerConfirmedAt ? "確認済み" : awaitingSales(event) ? "所感提出済み・営業確認待ち" : event.result === "pending" ? "確定" : resultLabel}`}</span>
       </div>
       <section className="dh-engineer-section"><h3>{event.entry ? entered ? "初回入場の記録" : "初回入場の予定" : reference ? "面談時の情報" : "面談の予定"}</h3><Facts rows={[
-        [event.entry ? "集合時刻" : "日時", <>{dateLabel(event.stamp)}<br /><strong>{event.time}{event.end ? ` – ${event.end}` : " 集合"}</strong></>],
+        [event.entry ? "集合時刻" : "日時", <>{dateLabel(event.stamp)}<br /><strong>{event.time}{event.end ? ` – ${event.end}` : event.entry ? " 集合" : ""}</strong></>],
         [event.entry ? "集合場所" : "実施形式", event.format], ["参画者", event.participantName || "未登録"], ["参画者(ひらがな)", event.participantNameKana || "未登録"], ["担当営業", "青木 美咲"],
         ...(!event.entry ? [["面談URL", event.url && /^https?:\/\//i.test(event.url) ? <a href={event.url} target="_blank" rel="noreferrer">{event.url}<span className="dh-engineer-link-caption">別タブで開く <Icon name="right" /></span></a> : "未登録"] as [string, ReactNode]] : []),
       ]} /><button type="button" className="dh-engineer-secondary" onClick={() => setPreview(calendarPreview(event))}><Icon name="calendar" />カレンダー登録内容を確認</button></section>
@@ -353,7 +417,7 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
     </>;
   }
   function calendarPreview(item: ScheduleEvent): NotificationPreview {
-    return { title: item.entry ? "初回入場予定の登録内容" : "面談予定の登録内容", lines: [ { label: "案件", value: item.project }, { label: item.entry ? "入場者" : "参加者", value: item.person }, { label: item.entry ? "集合時刻" : "日時", value: `${dateLabel(item.stamp)} ${item.time}${item.end ? ` – ${item.end}` : " 集合"}` }, { label: item.entry ? "集合場所" : "面談URL", value: item.entry ? item.format : item.url || "未登録" }, ...(item.entry ? [{ label: "当日の案内", value: item.guidance || "記載なし" }] : []) ] };
+    return { title: item.entry ? "初回入場予定の登録内容" : "面談予定の登録内容", lines: [ { label: "案件", value: item.project }, { label: item.entry ? "入場者" : "参加者", value: item.person }, { label: item.entry ? "集合時刻" : "日時", value: `${dateLabel(item.stamp)} ${item.time}${item.end ? ` – ${item.end}` : item.entry ? " 集合" : ""}` }, { label: item.entry ? "集合場所" : "面談URL", value: item.entry ? item.format : item.url || "未登録" }, ...(item.entry ? [{ label: "当日の案内", value: item.guidance || "記載なし" }] : []) ] };
   }
 
   return <>
@@ -366,7 +430,7 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
           <div className="dh-engineer-list-heading">{view === "schedule" ? <div className="type-tabs" aria-label="予定の種類">{([ ["all", "すべて"], ["meet", "面談"], ["entry", "初回入場"] ] as const).map(([value, label]) => <button key={value} type="button" className={kind === value ? "active" : ""} aria-pressed={kind === value} onClick={() => { setKind(value); setReferenceEventId(null); const items = scheduledEvents.filter(item => value === "all" || item.type === value); if (!items.some(item => item.key === selectedEvent)) setSelectedEvent(items[0]?.key ?? ""); }}>{label}</button>)}</div> : <strong>{view === "inProgress" ? "入場中の案件" : view === "requests" ? "案件ごとの依頼" : "面談ごとの記録"}</strong>}<span>{view === "schedule" || view === "inProgress" ? filteredEvents.length : view === "requests" ? requests.length : meetings.length}件</span></div>
           <div ref={listRef} className="dh-engineer-list">
             {(view === "schedule" || view === "inProgress") && (filteredEvents.length ? filteredEvents.map(item => <button className={`dh-engineer-schedule-row${event?.key === item.key ? " selected" : ""}`} type="button" key={item.key} aria-pressed={event?.key === item.key} onClick={() => { if (view === "inProgress") setSelectedInProgressEvent(item.key); else setSelectedEvent(item.key); setReferenceEventId(null); focusDetail(); }}><span className="dh-engineer-row-date"><b>{new Date(item.stamp).getUTCMonth() + 1}/{String(new Date(item.stamp).getUTCDate()).padStart(2, "0")}</b><time>{item.time}</time></span><span className="dh-engineer-row-content"><span className={`kind mark-${item.type}`}>{item.entry ? "初回入場" : "面談"}</span><strong>{item.project}</strong><span>{item.format}<i>・</i>{item.entry ? view === "inProgress" ? "入場中" : "入場案内あり" : item.route}{awaitingSales(item) && <span className="dh-engineer-row-status">所感提出済み・営業確認待ち</span>}{!item.entry && item.result !== "pending" && <span className={`dh-engineer-row-status ${item.result === "rejected" ? "is-rejected" : "is-passed"}`}>面談結果：{item.result === "passed" ? "合格" : "不合格"}・確認待ち</span>}</span></span><Icon name="chevright" /></button>) : <Empty title={view === "inProgress" ? "入場中の案件はありません" : "表示する予定はありません"}>{view === "inProgress" ? "初回入場の完了を確認すると、ここに案件が表示されます。" : "確定した予定を表示します。確認済みの予定は一覧から外れ、入場中の案件は「入場中」タブで確認できます。"}</Empty>)}
-            {view === "requests" && (requests.length ? requests.map(item => <button className={`dh-engineer-item-row${request?.id === item.id ? " selected" : ""}`} key={item.id} type="button" aria-pressed={request?.id === item.id} onClick={() => { setSelectedRequest(item.id); focusDetail(); }}><span className={`dh-engineer-badge ${item.status === "requested" ? "is-waiting" : ""}`}>{requestLabels[item.status]}</span><strong>{item.project}</strong><span>{item.candidates.length}件の候補日時{item.status === "responded" ? `・${item.availableSlotIds.length}件を回答済み` : ""}</span><Icon name="chevright" /></button>) : <Empty title="面談依頼はありません">新しい依頼が届くと、ここに表示されます。</Empty>)}
+            {view === "requests" && (requests.length ? requests.map(item => <button className={`dh-engineer-item-row${request?.id === item.id ? " selected" : ""}`} key={item.id} type="button" aria-pressed={request?.id === item.id} onClick={() => { setSelectedRequest(item.id); focusDetail(); }}><span className={`dh-engineer-badge ${item.status === "requested" ? "is-waiting" : ""}`}>{requestLabels[item.status]}</span><strong>{item.project}</strong><span>{requestSummary(item)}</span><Icon name="chevright" /></button>) : <Empty title="面談依頼はありません">新しい依頼が届くと、ここに表示されます。</Empty>)}
             {view === "feedback" && (orderedFeedbackMeetings.length ? orderedFeedbackMeetings.map(item => { const submitted = feedbacks.some(feedback => feedback.eventId === item.key); return <button className={`dh-engineer-item-row${feedbackEvent?.key === item.key ? " selected" : ""}`} key={item.key} type="button" aria-pressed={feedbackEvent?.key === item.key} onClick={() => { setSelectedFeedback(item.key); focusDetail(); }}><span className={`dh-engineer-badge ${submitted ? "is-submitted" : "is-waiting"}`}>{submitted ? "提出済み" : "所感未提出"}</span><strong>{item.project}</strong><span>{dateLabel(item.stamp)} {item.time}・{item.route}</span><Icon name="chevright" /></button>; }) : <Empty title="記録する面談はまだありません">面談が登録されると、所感や質問を入力できます。</Empty>)}
           </div>
         </section>
