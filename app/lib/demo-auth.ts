@@ -1,21 +1,15 @@
 import "server-only";
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
-import { DEMO_ENGINEERS, DEMO_LEADERS } from "../demo-accounts";
+import { accountBackend } from "./account-backend";
 import type { UserRole } from "../types";
 
 export type DemoUser = { id: string; name: string; role: UserRole };
-
-// Public sample credentials for the local design demo, never production accounts.
-const accounts = [
-  { id: "sales-aoki", name: "青木 美咲", role: "sales", email: "sales.aoki@dealhunter.example", password: "demo-sales" },
-  ...DEMO_ENGINEERS.map(user => ({ ...user, role: "student" as const, password: "demo-engineer" })),
-  ...DEMO_LEADERS.map(user => ({ ...user, role: "leader" as const, password: "demo-leader" })),
-] as const;
+export class LoginRateLimitError extends Error {}
 
 const COOKIE = "dealhunter_demo_session";
 const MAX_AGE = 8 * 60 * 60;
@@ -36,16 +30,21 @@ async function signingKey() {
   return key;
 }
 
-export function authenticateDemoUser(email: string, password: string): DemoUser | null {
-  const account = accounts.find(item => item.email === email.trim().toLowerCase());
-  if (!account) return null;
-  const actual = Buffer.from(password);
-  const expected = Buffer.from(account.password);
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
-  return { id: account.id, name: account.name, role: account.role };
+function isUser(value: unknown): value is DemoUser {
+  if (!value || typeof value !== "object") return false;
+  const user = value as Record<string, unknown>;
+  return typeof user.id === "string" && typeof user.name === "string" && ["sales", "student", "leader", "admin"].includes(String(user.role));
 }
 
-export const homeFor = (role: DemoUser["role"]) => role === "sales" ? "/sales" : role === "leader" ? "/leader" : "/engineer";
+export async function authenticateDemoUser(email: string, password: string): Promise<DemoUser | null> {
+  const result = await accountBackend<{ user?: unknown }>("auth/login", { email, password });
+  if (result.status === 429) throw new LoginRateLimitError();
+  if (result.status === 401 || result.status === 400) return null;
+  if (result.status !== 200 || !isUser(result.data.user)) throw new Error("Account service unavailable");
+  return result.data.user;
+}
+
+export const homeFor = (role: DemoUser["role"]) => role === "admin" ? "/admin" : role === "sales" ? "/sales" : role === "leader" ? "/leader" : "/engineer";
 
 export async function createDemoSession(user: DemoUser) {
   const token = await new SignJWT({})
@@ -59,7 +58,7 @@ export async function createDemoSession(user: DemoUser) {
   (await cookies()).set(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    // This application is a loopback-only HTTP demo, including `npm start`.
+    // This application currently runs on loopback HTTP, including `npm start`.
     secure: false,
     path: "/",
     maxAge: MAX_AGE,
@@ -73,9 +72,11 @@ export async function getDemoUser(): Promise<DemoUser | null> {
     const { payload } = await jwtVerify(token, await signingKey(), {
       algorithms: ["HS256"], issuer: ISSUER, audience: AUDIENCE,
     });
-    // Roles are resolved from the registered account, never trusted from the form or cookie.
-    const account = accounts.find(item => item.id === payload.sub);
-    return account ? { id: account.id, name: account.name, role: account.role } : null;
+    if (typeof payload.sub !== "string" || !/^[A-Za-z0-9_-]+$/.test(payload.sub)) return null;
+    // Resolve current permissions from PostgreSQL on every request. A prior
+    // cookie cannot retain privileges after an administrator changes the role.
+    const result = await accountBackend<{ user?: unknown }>(`auth/users/${encodeURIComponent(payload.sub)}`);
+    return result.status === 200 && isUser(result.data.user) ? result.data.user : null;
   } catch {
     return null;
   }

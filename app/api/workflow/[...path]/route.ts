@@ -18,11 +18,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     if (!validOrigin) return NextResponse.json({ error: "この操作はログイン中の画面から行ってください。" }, { status: 403 });
   }
   const route = (await params).path.join("/");
-  if (!/^(requests|requests\/[A-Za-z0-9_-]+\/(respond|confirm|attachment)|events\/[A-Za-z0-9_-]+\/(feedback|entry|acknowledge)|tasks\/[A-Za-z0-9_-]+\/acknowledge)$/.test(route)) {
+  if (!/^(requests|requests\/[A-Za-z0-9_-]+\/(respond|confirm|attachment)|recruitments\/[A-Za-z0-9_-]+\/assign|events\/[A-Za-z0-9_-]+\/(feedback|entry|acknowledge)|tasks\/[A-Za-z0-9_-]+\/acknowledge)$/.test(route)) {
     return NextResponse.json({ error: "操作が見つかりません。" }, { status: 404 });
   }
   const studentAction = route.endsWith("/respond") || route.endsWith("/feedback") || (route.startsWith("events/") && route.endsWith("/acknowledge"));
-  if (user.role !== (studentAction ? "student" : "sales")) {
+  const leaderAction = /^recruitments\/[A-Za-z0-9_-]+\/assign$/.test(route);
+  if (user.role !== (leaderAction ? "leader" : studentAction ? "student" : "sales")) {
     return NextResponse.json({ error: "この操作を行う権限がありません。" }, { status: 403 });
   }
   if (!request.headers.get("content-type")?.includes("application/json")) {

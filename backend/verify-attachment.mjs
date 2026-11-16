@@ -23,7 +23,7 @@ const file=(name,text)=>({name,contentBase64:Buffer.from(text).toString("base64"
 const bytes=async(user,id)=>Buffer.from(await(await call(user,`requests/${id}/attachment`)).arrayBuffer()).toString();
 const before=snapshot();
 try {
- const payload={project:`共通添付検証-${randomUUID()}`,summary:"参画者と面談者を別保存する検証",leaderId:"leader-sato",studentIds:["student-takahashi","student-yamamoto"],participantName:"参画 別人",participantNameKana:"は\u3099ん・たろう",candidates:[{start:"2026-11-20T10:00",end:"2026-11-20T10:45"}],attachment:file("共通.pdf","%PDF-shared")};
+ const payload={project:`共通添付検証-${randomUUID()}`,upperCompany: "検証用上位会社", summary:"参画者と面談者を別保存する検証",leaderId:"leader-sato",studentIds:["student-takahashi","student-yamamoto"],participantName:"参画 別人",participantNameKana:"は\u3099ん・たろう",candidates:[{start:"2026-11-20T10:00",end:"2026-11-20T10:45"}],attachment:file("共通.pdf","%PDF-shared")};
  for(const invalid of [{...payload,participantNameKana:"タロウ"},{...payload,participantName:"x".repeat(201)},{...payload,attachments:[file("a.pdf","a"),file("b.pdf","b")]},{...payload,attachment:[file("a.pdf","a")]}]) await call("sales-aoki","requests",invalid,400);
  assert(snapshot()===before,"Invalid inputs changed persisted data");
  const created=await(await call("sales-aoki","requests",payload)).json(); fixtures.push({id:created.projectId,name:payload.project});

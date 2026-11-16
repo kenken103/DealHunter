@@ -26,6 +26,7 @@ main.dh-login-main{max-width:none;min-height:calc(100svh - 62px);margin:0;paddin
 .dh-login-submit:hover{background:#ffe361}
 .dh-login-submit:disabled{cursor:wait;opacity:.7}
 .dh-login-routing-note{text-align:center;margin-top:17px;color:#66738a;font-size:11px;line-height:1.8}
+.dh-login-register-link{text-align:center;margin-top:21px;color:#66738a;font-size:12px;line-height:1.8}.dh-login-register-link a{font-weight:650;color:#244ba6;text-decoration:underline;text-underline-offset:3px}.dh-login-admin-note{text-align:center;margin-top:6px;color:#78869b;font-size:10px;line-height:1.7}
 .dh-login-error{padding:10px 12px;border:1px solid #ebc1bd;border-left:3px solid #a52d24;border-radius:2px;color:#862a24;background:#fff5f4;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
 .dh-login-demo{margin-top:25px;padding-top:19px;border-top:1px solid #e0e5ee}
 .dh-login-demo-heading{display:flex;justify-content:space-between;gap:10px;align-items:baseline}

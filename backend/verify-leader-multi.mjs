@@ -46,7 +46,7 @@ const getEvent = (data, id) => {
 
 async function createProject(state, label, studentIds, leaderId, legacy = false) {
   const name = `${state.prefix} ${label} ${state.suffix}`;
-  const body = { project: name, summary: `${label}の参加者と担当リーダーを独立して確認するための検証案件です。`, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T13:45" }, { start: "2026-11-13T15:00", end: "2026-11-13T15:45" }], ...(legacy ? { studentId: studentIds[0] } : { studentIds }), ...(leaderId === undefined ? {} : { leaderId }) };
+  const body = { project: name, upperCompany: "検証用上位会社", summary: `${label}の参加者と担当リーダーを独立して確認するための検証案件です。`, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T13:45" }, { start: "2026-11-13T15:00", end: "2026-11-13T15:45" }], ...(legacy ? { studentId: studentIds[0] } : { studentIds }), ...(leaderId === undefined ? {} : { leaderId }) };
   const created = await request(sales, "/api/requests", body, [200, 201]);
   const data = await dashboard(sales);
   const first = data.requests.find(item => item.id === created.requestId);
@@ -227,7 +227,7 @@ assert.equal(before.app_users.length, 12);
 await saveJson(baselinePath, before);
 const state = { phase: "starting", prefix: "統合確認・リーダー複数参加者", suffix: randomUUID(), fixtures: [] };
 await saveJson(statePath, state);
-const valid = { project: `${state.prefix} 原子性確認 ${state.suffix}`, summary: "無効な複数参加者依頼が何も保存しないことを確認します。", studentIds: [firstStudent, secondStudent], leaderId: firstLeader, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T13:45" }] };
+const valid = { project: `${state.prefix} 原子性確認 ${state.suffix}`, upperCompany: "検証用上位会社", summary: "無効な複数参加者依頼が何も保存しないことを確認します。", studentIds: [firstStudent, secondStudent], leaderId: firstLeader, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T13:45" }] };
 await request(sales, "/api/requests", { ...valid, studentIds: [firstStudent, firstStudent] }, 400);
 await request(sales, "/api/requests", { ...valid, studentIds: [firstStudent, "unknown-student"] }, 400);
 await request(sales, "/api/requests", { ...valid, leaderId: firstStudent }, 400);

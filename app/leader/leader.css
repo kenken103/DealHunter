@@ -175,3 +175,51 @@ main.dh-leader-main{max-width:1510px;padding-bottom:40px;background:#f4f6f9}
   .dh-leader-empty{padding:38px 20px}
   .dh-leader-empty h2{font-size:15px}
 }
+
+/* A leader may select interviewers; other workflow records remain view-only. */
+.dh-leader-status.is-selection{border-color:#e1d3ab;background:#fffaf0;color:#75571f}
+.dh-leader-status.is-selection:before{background:#ad8127}
+.dh-leader-row-members>.dh-leader-status{display:inline-flex;justify-self:start;font-size:12px}
+.dh-leader-assignment>.dh-leader-body{margin-top:14px}
+.dh-leader-recruitment-schedule{margin:20px 0;padding:18px;border:1px solid var(--ui-border,#dce3ec);border-radius:8px;min-width:0;background:#fafbfd}
+.dh-leader-recruitment-schedule>h4{margin:0 0 10px;font-size:14px;line-height:1.8;color:#304660}
+.dh-leader-recruitment-schedule>.dh-leader-facts{margin-top:14px}
+.dh-leader-assignment form{display:grid;gap:18px;min-width:0}
+.dh-leader-assignment fieldset{margin:0;padding:16px;border:1px solid var(--ui-border,#dce3ec);border-radius:8px;min-width:0}
+.dh-leader-assignment legend{padding:0 6px;font-size:14px;font-weight:650;color:#304660;line-height:1.8}
+.dh-leader-assignment legend>span{font-size:12px;font-weight:400;margin-left:5px;color:var(--ui-muted,#52647b)}
+.dh-leader-team-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:15px}
+.dh-leader-team-options>label{display:flex;align-items:center;gap:10px;min-width:0;min-height:46px;padding:10px;border:1px solid var(--ui-border,#dce3ec);border-radius:6px;font-size:14px;line-height:1.8;color:#304660;cursor:pointer;background:#fff}
+.dh-leader-team-options>label:has(input:checked){background:var(--ui-selected,#f0f5ff);border-color:#91aade}
+.dh-leader-team-options>label:focus-within{outline:2px solid #4f75db;outline-offset:2px}
+.dh-leader-team-options input[type=checkbox]{width:18px;height:18px;min-width:18px;flex:none;margin:0;accent-color:#193eab}
+.dh-leader-team-options>label>span{overflow-wrap:anywhere;min-width:0}
+.dh-leader-assignment-count{margin-top:12px;font-size:13px;font-weight:550;color:var(--ui-muted,#52647b)}
+.dh-leader-assignment-primary,.dh-leader-assignment-secondary{display:inline-flex;justify-content:center;align-items:center;gap:8px;min-height:44px;padding:10px 14px;border:1px solid #193eab;border-radius:7px;font-size:13px;font-weight:600;line-height:1.8;white-space:normal;overflow-wrap:anywhere;text-align:center}
+.dh-leader-assignment-primary{background:#193eab;color:#fff;justify-self:start}
+.dh-leader-assignment-primary:hover:not(:disabled){background:#0c328c}
+.dh-leader-assignment-secondary{background:#fff;color:#244b9b;border-color:#b4c4dd}
+.dh-leader-assignment-secondary:hover:not(:disabled){background:#f5f8fc}
+.dh-leader-assignment-primary:disabled,.dh-leader-assignment-secondary:disabled{opacity:.6;cursor:default}
+.dh-leader-assignment-primary>.icon{width:15px;height:15px}
+.dh-leader-assignment-review{padding:18px;border:1px solid var(--ui-border,#dce3ec);border-radius:8px;min-width:0}
+.dh-leader-assignment-review>h4{margin:0 0 14px;color:#304660;font-size:15px;line-height:1.8;outline:none}
+.dh-leader-assignment-review>ul{list-style:none;padding:0;margin:0 0 16px;display:grid;gap:9px;color:#304660;font-size:14px;line-height:1.8}
+.dh-leader-assignment-review li{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere}
+.dh-leader-assignment-review li>.icon{width:15px;height:15px;color:#657b98}
+.dh-leader-assignment-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.dh-leader-assignment-actions>button{flex:1;min-width:140px}
+.dh-leader-assignment-error,.dh-leader-assignment-success{padding:14px 16px;border:1px solid;border-radius:7px;font-size:14px;line-height:1.85;overflow-wrap:anywhere;outline:none}
+.dh-leader-assignment-error{border-color:#e3c5bf;background:#fff5f3;color:#8b493e}
+.dh-leader-assignment-success{margin-top:18px;border-color:#bdd6c8;background:#f1f8f4;color:#316048}
+.dh-leader-project-row:disabled,.dh-leader-filters input:disabled,.dh-leader-filters select:disabled{cursor:default;opacity:.7}
+.dh-leader-assignment-primary:focus-visible,.dh-leader-assignment-secondary:focus-visible{outline:2px solid #4f75db;outline-offset:2px}
+@media(max-width:650px){
+  .dh-leader-recruitment-schedule{padding:14px;margin:18px 0}
+  .dh-leader-assignment fieldset{padding:12px}
+  .dh-leader-team-options{grid-template-columns:minmax(0,1fr);gap:8px}
+  .dh-leader-team-options>label{padding:10px 12px}
+  .dh-leader-assignment-review{padding:15px 12px}
+  .dh-leader-assignment-actions{flex-direction:column}
+  .dh-leader-assignment-actions>button,.dh-leader-assignment form>.dh-leader-assignment-primary{width:100%;min-width:0;justify-self:stretch}
+}

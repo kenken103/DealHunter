@@ -80,11 +80,16 @@ function verifyEntryHistory(data, viewer) {
 }
 
 function verifyCaseCollections(data, viewer) {
-  for (const collection of ["projects", "events", "questions", "tasks", "requests", "feedbacks", "notifications"]) {
+  for (const collection of ["projects", "events", "questions", "tasks", "requests", "recruitments", "feedbacks", "notifications"]) {
     assert.ok(Array.isArray(data[collection]), `${viewer}: ${collection} must be an array`);
     if (emptyMode) assert.equal(data[collection].length, 0, `${viewer}: ${collection} must be empty after the case-data reset`);
   }
   assert.ok(Array.isArray(data.leaders), `${viewer}: leader directory must be an array`);
+  assert.ok(Array.isArray(data.teamMembers), `${viewer}: team roster must be an array`);
+  for (const record of [...data.projects, ...data.events, ...data.requests, ...data.recruitments]) {
+    assert.equal(typeof record.upperCompany, "string", `${viewer}: upper-company metadata must be a string, including old cases`);
+    assert.equal(typeof record.endCompany, "string", `${viewer}: end-company metadata must be a string, including old cases`);
+  }
   for (const project of data.projects) {
     assert.ok(project.leaderId === null || typeof project.leaderId === "string", `${viewer}: project leader must be nullable`);
   }
@@ -121,6 +126,7 @@ try {
   assert.equal(anonymousAcknowledgment.status, 401, "Anonymous users must not acknowledge tasks");
   const anonymousEventAcknowledgment = await request("/api/workflow/events/nonexistent/acknowledge", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{}" });
   assert.equal(anonymousEventAcknowledgment.status, 401, "Anonymous users must not confirm an engineer's schedule");
+  assert.equal((await request("/api/workflow/recruitments/nonexistent/assign", { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 401, "Anonymous users must not select interviewers");
 
   const invalid = await login("sales.aoki@dealhunter.example", "wrong-password");
   assert.equal(invalid.status, 303, "Invalid login must redirect back to login");
@@ -140,6 +146,8 @@ try {
   assert.equal(dashboard.status, 200, "Sales account should read its dashboard");
   const salesData = await dashboard.json();
   verifyCaseCollections(salesData, "sales");
+  assert.deepEqual(salesData.teamMembers, [], "Sales must not receive leader team rosters");
+  assert.equal((await request("/api/workflow/recruitments/nonexistent/assign", { method: "POST", headers: { Cookie: sales, Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 403, "Sales must not select interviewers on behalf of a leader");
   const salesEventAcknowledgment = await request("/api/workflow/events/nonexistent/acknowledge", { method: "POST", headers: { Cookie: sales, Origin: origin, "Content-Type": "application/json" }, body: "{}" });
   assert.equal(salesEventAcknowledgment.status, 403, "Sales must not confirm a schedule on behalf of an engineer");
   const linkedEntryCount = verifyEntryHistory(salesData, "sales");
@@ -230,6 +238,9 @@ try {
     assert.equal(accountData.currentUser.role, "student", `${alias}: dashboard must retain the engineer role`);
     assert.deepEqual(accountData.students.map(student => student.id), [expectedId], `${alias}: student directory must contain only self`);
     assert.deepEqual(accountData.leaders, [], `${alias}: students must not receive the leader directory`);
+    assert.deepEqual(accountData.teamMembers, [], `${alias}: students must not receive leader rosters`);
+    assert.deepEqual(accountData.recruitments, [], `${alias}: students must not receive team recruitment details`);
+    assert.equal((await request("/api/workflow/recruitments/nonexistent/assign", { method: "POST", headers: { Cookie: accountCookie, Origin: origin, "Content-Type": "application/json" }, body: "{}" })).status, 403, `${alias}: student must not select interviewers`);
     for (const collection of ["events", "requests", "feedbacks"]) {
       assert.ok(Array.isArray(accountData[collection]), `${alias}: ${collection} must be an array`);
       assert.ok(accountData[collection].every(item => item.studentId === expectedId), `${alias}: ${collection} must not include another engineer's data`);
@@ -257,12 +268,18 @@ try {
     assert.deepEqual(leaderData.leaders, [], "Leaders must not receive a global leader directory");
     assert.ok(leaderData.projects.every(project => project.leaderId === expectedId), "Leader must see only explicitly assigned projects");
     const projectIds = new Set(leaderData.projects.map(project => project.id));
-    for (const collection of ["events", "requests", "feedbacks", "tasks"]) {
+    for (const collection of ["events", "requests", "recruitments", "feedbacks", "tasks"]) {
       assert.ok(leaderData[collection].every(item => projectIds.has(item.projectId)), `Leader ${collection} must stay within assigned projects`);
     }
     assert.ok(leaderData.questions.every(item => projectIds.has(item.project)), "Leader questions must stay within assigned projects");
     const memberIds = new Set([...leaderData.requests, ...leaderData.events].map(item => item.studentId));
     assert.ok(leaderData.students.every(student => memberIds.has(student.id)), "Leader directory must contain only assigned project members");
+    const expectedTeam = alias === "sato" ? ["takahashi", "yamamoto", "mori", "ito", "kobayashi"] : ["sasaki", "tanaka", "kimura", "inoue"];
+    assert.deepEqual(leaderData.teamMembers.map(member => member.id).sort(), expectedTeam.map(member => `student-${member}`).sort(), "Leader selection roster must contain only their active demo team");
+    const assignmentPath = "/api/workflow/recruitments/nonexistent/assign";
+    assert.equal((await request(assignmentPath, { method: "POST", headers: { Cookie: leaderCookie, Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ studentIds: [`student-${expectedTeam[0]}`] }) })).status, 404, "Leader assignment route must reach backend ownership checks");
+    assert.equal((await request(assignmentPath, { method: "POST", headers: { Cookie: leaderCookie, Origin: "https://untrusted.example", "Content-Type": "application/json" }, body: "{}" })).status, 403, "Leader assignment must reject a foreign Origin");
+    assert.equal((await request(assignmentPath, { method: "POST", headers: { Cookie: leaderCookie, Origin: origin, "Content-Type": "application/json" }, body: "{" })).status, 400, "Leader assignment must reject malformed JSON");
     assert.equal((await request("/api/requests/nonexistent/attachment", { headers: { Cookie: leaderCookie } })).status, 403, "Leader must not download a member attachment");
     for (const route of ["requests", "requests/nonexistent/respond", "requests/nonexistent/confirm", "requests/nonexistent/attachment", "events/nonexistent/feedback", "events/nonexistent/entry", "events/nonexistent/acknowledge", "tasks/nonexistent/acknowledge"]) {
       const denied = await request(`/api/workflow/${route}`, { method: "POST", headers: { Cookie: leaderCookie, Origin: origin, "Content-Type": "application/json" }, body: "{}" });
@@ -292,7 +309,7 @@ try {
   assert.ok(logout.headers.getSetCookie().some(value => /^dealhunter_demo_session=;/.test(value) && /Expires=Thu, 01 Jan 1970/i.test(value)), "Logout must expire the browser session cookie");
   await expectRedirect("/sales", "/login");
 
-  console.log(`PASS: ${emptyMode ? "empty case collections, " : ""}real login/logout, safe three-role return paths, nine self-only engineers, two read-only leaders scoped to assigned projects, ${linkedEntryCount} linked entries with source interviews, confirmation metadata/access, ${anotherEngineerEvent ? "cross-engineer schedule confirmation rejected, " : "cross-engineer schedule confirmation not exercised (no other engineer event), "}sales directories, protected pages/API, mutation role/origin checks and cookie tamper rejection.`);
+  console.log(`PASS: ${emptyMode ? "empty case collections, " : ""}real login/logout, safe three-role return paths, nine self-only engineers, two leaders with scoped nomination and project access, ${linkedEntryCount} linked entries with source interviews, confirmation metadata/access, ${anotherEngineerEvent ? "cross-engineer schedule confirmation rejected, " : "cross-engineer schedule confirmation not exercised (no other engineer event), "}sales directories, protected pages/API, mutation role/origin checks and cookie tamper rejection.`);
 } catch (error) {
   console.error(`FAIL: ${error instanceof Error ? error.message : "Authentication verification failed"}`);
   process.exitCode = 1;

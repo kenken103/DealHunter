@@ -33,3 +33,7 @@
 .sales-date-selection li>button{flex:none;width:30px;min-height:30px;border-radius:2px;font-size:18px;line-height:1}
 .sales-date-selection li>button:hover:not(:disabled){background:#dce7fd}
 @media(max-width:650px){.sales-date-picker{padding:8px}.sales-date-picker-days>button{font-size:12px}.sales-date-picker-weekdays,.sales-date-picker-days{gap:3px}}
+.sales-assignment-note{margin:2px 0 8px;font-size:13px;line-height:1.9;color:var(--ui-muted,#52647b);overflow-wrap:anywhere}
+.sales-recruitment-row .sales-status{color:#38568a}
+.sales-company-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0}.sales-company-fields>.d-label{min-width:0}.sales-company-fields input{min-width:0}
+@media(max-width:650px){.sales-company-fields{grid-template-columns:1fr}}

@@ -139,7 +139,7 @@ if (process.argv.includes("--rejected")) {
   const project = `統合確認・面談から入場 不合格分岐 ${Date.now().toString(36)}`;
   const created = await request(sales, "/api/requests", {
     project,
-    summary: "不合格後も面談所感と質問を提出でき、初回入場は作成されないことを確認します。",
+    upperCompany: "検証用上位会社", summary: "不合格後も面談所感と質問を提出でき、初回入場は作成されないことを確認します。",
     studentId: student,
     candidates: [{ start: "2026-11-12T10:00", end: "2026-11-12T10:45" }],
   }, [200, 201]);
@@ -173,7 +173,7 @@ const candidates = [
   { start: "2026-11-13T15:00", end: "2026-11-13T16:00" },
 ];
 const project = `統合確認・面談から入場 ${Date.now().toString(36)}`;
-const payload = { project, summary: "営業依頼・受講者回答・日時確定・所感・初回入場を実DBで確認します。", studentId: student, candidates };
+const payload = { project, upperCompany: "検証用上位会社", summary: "営業依頼・受講者回答・日時確定・所感・初回入場を実DBで確認します。", studentId: student, candidates };
 await request(student, "/api/requests", payload, 403, { "X-DealHunter-Role": "sales" });
 await request(sales, "/api/requests", { ...payload, project: "" }, 400);
 const created = await request(sales, "/api/requests", payload, [200, 201]);

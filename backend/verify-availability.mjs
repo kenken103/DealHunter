@@ -55,7 +55,7 @@ const savedRequest = async (id, user = sales) => {
 };
 const respond = (user, id, body, status = 200) => request(user, `/api/requests/${id}/respond`, body, status);
 const confirm = (id, slotId, status = 200, user = sales) => request(user, `/api/requests/${id}/confirm`, { slotId, url: "https://meet.example/availability-integration" }, status);
-const draft = (label, overrides = {}) => ({ project: `${prefix} ${label}`, summary: "日時未指定の照会と本人による候補回答の確認用です。", studentIds: [student], leaderId: leader, scheduleMode: "availability", candidates: [], ...overrides });
+const draft = (label, overrides = {}) => ({ project: `${prefix} ${label}`, upperCompany: "検証用上位会社", summary: "日時未指定の照会と本人による候補回答の確認用です。", studentIds: [student], leaderId: leader, scheduleMode: "availability", candidates: [], ...overrides });
 const create = (label, overrides) => request(sales, "/api/requests", draft(label, overrides), [200, 201]);
 
 function cleanup(targets) {

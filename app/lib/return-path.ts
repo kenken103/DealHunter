@@ -1,7 +1,8 @@
 import type { UserRole } from "../types";
 type Query = { event?: string | string[]; request?: string | string[]; project?: string | string[] };
 
-export function homeLink(home: "/sales" | "/engineer" | "/leader", query: Query = {}) {
+export function homeLink(home: "/sales" | "/engineer" | "/leader" | "/admin", query: Query = {}) {
+  if (home === "/admin") return home;
   const params = new URLSearchParams();
   for (const key of home === "/leader" ? ["project"] as const : ["event", "request"] as const) {
     const value = query[key];
@@ -11,7 +12,7 @@ export function homeLink(home: "/sales" | "/engineer" | "/leader", query: Query 
 }
 
 export function safeHomeTarget(role: UserRole, next: unknown) {
-  const home = role === "sales" ? "/sales" : role === "leader" ? "/leader" : "/engineer";
+  const home = role === "admin" ? "/admin" : role === "sales" ? "/sales" : role === "leader" ? "/leader" : "/engineer";
   if (typeof next !== "string" || next.length > 2000) return home;
   try {
     const url = new URL(next, "http://dealhunter.local");

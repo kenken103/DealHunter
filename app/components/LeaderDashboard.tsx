@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { logout } from "../actions/auth";
 import type { DemoUser } from "../lib/demo-auth";
 import { sourceInterview } from "../lib/interview-history";
-import type { DashboardData, InterviewFeedback, InterviewRequest, Project, ScheduleEvent } from "../types";
+import type { DashboardData, InterviewFeedback, InterviewRequest, MutationResult, Project, Recruitment, ScheduleEvent, Student } from "../types";
 
-type StageGroup = "preparation" | "meeting" | "entry" | "active" | "closed";
+type StageGroup = "selection" | "preparation" | "meeting" | "entry" | "active" | "closed";
 type Stage = { label: string; group: StageGroup };
 type Member = { id: string; name: string; requests: InterviewRequest[]; events: ScheduleEvent[] };
-const groups: ["all" | StageGroup, string][] = [["all", "すべての状態"], ["preparation", "日程調整中"], ["meeting", "面談・結果待ち"], ["entry", "初回入場前"], ["active", "入場中"], ["closed", "見送り"]];
+const groups: ["all" | StageGroup, string][] = [["all", "すべての状態"], ["selection", "面談者の選定待ち"], ["preparation", "日程調整中"], ["meeting", "面談・結果待ち"], ["entry", "初回入場前"], ["active", "入場中"], ["closed", "見送り"]];
 const resultLabels = { pending: "結果未登録", passed: "合格", rejected: "不合格" };
 const requestLabels = { requested: "日程の回答待ち", responded: "回答済み・日時確定待ち", confirmed: "面談日時確定済み" };
 const dateLabel = (stamp: number) => new Intl.DateTimeFormat("ja-JP", { month: "long", day: "numeric", weekday: "short", timeZone: "UTC" }).format(stamp);
@@ -72,6 +72,51 @@ function MemberRecord({ member, data, initiallyOpen }: { member: Member; data: D
   </details>;
 }
 
+function RecruitmentSchedule({ recruitment }: { recruitment: Recruitment }) {
+  return <div className="dh-leader-recruitment-schedule"><h4>営業からの依頼日程</h4>{recruitment.scheduleMode === "availability" ? <><p className="dh-leader-muted">面談者が参加可能な開始日時を提案する依頼です。</p><Facts rows={[["指定日", recruitment.requestedDates.length ? recruitment.requestedDates.map(value => dateLabel(new Date(`${value}T00:00:00Z`).getTime())).join("、") : "指定なし（日付から提案できます）"]]} /></> : <><p className="dh-leader-muted">面談者が参加可能な候補日時を選んで回答する依頼です。</p><ul className="dh-leader-candidates">{recruitment.candidates.map(slot => <li key={slot.id || slot.start}>{dateTimeLabel(slot.start)}{slot.end ? ` 〜 ${dateTimeLabel(slot.end)}` : ""}</li>)}</ul></>}</div>;
+}
+
+function RecruitmentAssignment({ recruitment, teamMembers, pending, onAssign }: { recruitment: Recruitment; teamMembers: Student[]; pending: boolean; onAssign: (recruitment: Recruitment, studentIds: string[]) => Promise<void> }) {
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [reviewIds, setReviewIds] = useState<string[] | null>(null);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const saving = useRef(false);
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const teamOptions = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (error) errorRef.current?.focus({ preventScroll: true }); }, [error]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (saving.current || pending || saved) return;
+    setError("");
+    const studentIds = reviewIds ?? selectedIds;
+    if (!studentIds.length) { setError("面談者を1名以上選択してください。"); return; }
+    if (studentIds.some(id => !teamMembers.some(member => member.id === id))) { setError("チームの構成が更新されています。現在のチームから面談者を選び直してください。"); setReviewIds(null); setSelectedIds(current => current.filter(id => teamMembers.some(member => member.id === id))); return; }
+    if (!reviewIds) {
+      setReviewIds([...studentIds]);
+      requestAnimationFrame(() => reviewHeading.current?.focus({ preventScroll: true }));
+      return;
+    }
+    saving.current = true;
+    try { await onAssign(recruitment, studentIds); setSaved(true); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "面談者を確定できませんでした。もう一度お試しください。"); }
+    finally { saving.current = false; }
+  }
+
+  return <section className="dh-leader-section dh-leader-assignment" aria-labelledby={`dh-assignment-${recruitment.id}`}>
+    <h3 id={`dh-assignment-${recruitment.id}`}>面談者の選定</h3>
+    <Status stage={saved ? { label: "面談者を確定済み", group: "preparation" } : { label: "面談者の選定待ち", group: "selection" }} />
+    <p className="dh-leader-body">{saved ? "選定した面談者への依頼を作成しました。以降の日程回答は面談者本人が行います。" : "営業から面談者の選定依頼が届いています。案件概要と日程を確認し、自分のチームから面談者を選択してください。"}</p>
+    <RecruitmentSchedule recruitment={recruitment} />
+    {saved ? <p className="dh-leader-assignment-success" role="status">面談者を確定しました。表示が切り替わらない場合は、画面上部の「更新」で最新の状態を確認してください。</p> : <form onSubmit={submit}>
+      {error && <p className="dh-leader-assignment-error" ref={errorRef} tabIndex={-1} role="alert">{error}</p>}
+      {reviewIds ? <div className="dh-leader-assignment-review"><h4 ref={reviewHeading} tabIndex={-1}>選定する面談者を確認</h4><ul>{reviewIds.map(id => <li key={id}><Icon name="user" />{teamMembers.find(member => member.id === id)?.name || "チーム構成を確認してください"}</li>)}</ul><p className="dh-leader-muted">確定すると、選択した面談者に面談依頼が作成されます。以降の日程回答は面談者本人が行い、営業が日時を確定します。</p><div className="dh-leader-assignment-actions"><button className="dh-leader-assignment-secondary" type="button" disabled={pending} onClick={() => { setReviewIds(null); setError(""); requestAnimationFrame(() => { (teamOptions.current?.querySelector<HTMLInputElement>("input:checked") ?? teamOptions.current?.querySelector<HTMLInputElement>("input"))?.focus(); }); }}>選び直す</button><button className="dh-leader-assignment-primary" type="submit" disabled={pending}>{pending ? "面談者を確定中…" : "この面談者で確定する"}<Icon name="check" /></button></div></div> : <><fieldset disabled={pending} aria-describedby={`dh-team-note-${recruitment.id}`}><legend>自分のチームの面談者 <span>複数選択可</span></legend><p className="dh-leader-muted" id={`dh-team-note-${recruitment.id}`}>1名以上選択してください。本人ごとに依頼と日程回答を管理します。</p><div className="dh-leader-team-options" ref={teamOptions}>{teamMembers.map(member => <label key={member.id}><input type="checkbox" name="studentIds" value={member.id} checked={selectedIds.includes(member.id)} onChange={event => { const checked = event.currentTarget.checked; setSelectedIds(current => checked ? current.includes(member.id) ? current : [...current, member.id] : current.filter(id => id !== member.id)); }} /><span>{member.name}</span></label>)}</div>{!teamMembers.length && <p className="dh-leader-muted">選択できるチームメンバーがいません。担当営業にご確認ください。</p>}<p className="dh-leader-assignment-count" aria-live="polite">選択 {selectedIds.length}名</p></fieldset><button className="dh-leader-assignment-primary" type="submit" disabled={pending || !teamMembers.length}>選んだ面談者を確認<Icon name="arrow" /></button></>}
+    </form>}
+  </section>;
+}
+
 export default function LeaderDashboard({ user }: { user: DemoUser }) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -80,6 +125,8 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [assigning, setAssigning] = useState(false);
+  const assigningRef = useRef(false);
   const active = useRef(false);
   const sequence = useRef(0);
   const initialLink = useRef(false);
@@ -87,6 +134,7 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
   const listRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const version = ++sequence.current;
@@ -95,6 +143,7 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
       const response = await fetch("/api/dashboard", { cache: "no-store", signal });
       if (!active.current || version !== sequence.current) return;
       if (response.status === 401) { window.location.assign("/login"); return; }
+      if (response.status === 403) { window.location.assign("/"); return; }
       const updated = await response.json() as DashboardData & { error?: string };
       if (!active.current || version !== sequence.current) return;
       if (!response.ok) throw new Error(updated.error || "担当案件を取得できませんでした。もう一度お試しください。");
@@ -111,7 +160,7 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
         if (requested && !updated.projects.some(project => project.id === requested)) {
           setNotice("指定された案件は表示できません。担当案件から選択してください。"); setSelectedId("");
         } else {
-          setSelectedId(requested || updated.projects[0]?.id || "");
+          setSelectedId(requested || updated.recruitments?.find(item => item.status === "pending")?.projectId || updated.projects[0]?.id || "");
           if (requested) requestAnimationFrame(() => { if (window.matchMedia("(max-width: 800px)").matches) { detailRef.current?.scrollIntoView({ block: "start" }); detailRef.current?.focus({ preventScroll: true }); } });
         }
       }
@@ -124,7 +173,7 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
     active.current = true;
     const controller = new AbortController();
     void refresh(controller.signal);
-    const onFocus = () => { void refresh(); };
+    const onFocus = () => { if (!assigningRef.current) void refresh(); };
     const onVisible = () => { if (document.visibilityState === "visible") onFocus(); };
     window.addEventListener("focus", onFocus); document.addEventListener("visibilitychange", onVisible);
     return () => { active.current = false; sequence.current++; controller.abort(); window.removeEventListener("focus", onFocus); document.removeEventListener("visibilitychange", onVisible); };
@@ -132,12 +181,30 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
   useEffect(() => { if (error) errorRef.current?.focus({ preventScroll: true }); }, [error]);
 
   const projects = data?.projects ?? [];
-  const records = data ? projects.map(project => ({ project, members: membersOf(project.id, data) })) : [];
+  const recruitments = data?.recruitments ?? [];
+  const records = data ? projects.map(project => ({ project, members: membersOf(project.id, data), recruitment: recruitments.find(item => item.projectId === project.id) })) : [];
   const search = query.trim().toLocaleLowerCase("ja-JP");
-  const visible = records.filter(record => (!search || `${record.project.name} ${record.members.map(member => member.name).join(" ")}`.toLocaleLowerCase("ja-JP").includes(search)) && (group === "all" || record.members.some(member => stageOf(member, data?.feedbacks ?? []).group === group)));
+  const visible = records.filter(record => (!search || `${record.project.name} ${record.members.map(member => member.name).join(" ")} ${record.recruitment?.status === "pending" ? "面談者の選定待ち 未定" : ""}`.toLocaleLowerCase("ja-JP").includes(search)) && (group === "all" || ((group === "selection" || group === "preparation") && record.recruitment?.status === "pending") || record.members.some(member => stageOf(member, data?.feedbacks ?? []).group === group)));
   const selected = visible.find(record => record.project.id === selectedId);
   const activeProjects = records.filter(record => record.members.some(member => stageOf(member, data?.feedbacks ?? []).group === "active")).length;
   const people = new Set(records.flatMap(record => record.members.map(member => member.id))).size;
+  const selectionPending = records.filter(record => record.recruitment?.status === "pending").length;
+
+  async function assign(recruitment: Recruitment, studentIds: string[]) {
+    if (assigningRef.current) throw new Error("面談者の確定処理中です。しばらくお待ちください。");
+    assigningRef.current = true; setAssigning(true); setNotice("");
+    try {
+      const response = await fetch(`/api/workflow/recruitments/${encodeURIComponent(recruitment.id)}/assign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studentIds }) });
+      if (response.status === 401) { window.location.assign("/login"); throw new Error("ログインし直して操作してください。"); }
+      const result = await response.json() as MutationResult & { error?: string };
+      if (!response.ok) throw new Error(result.error || "面談者を確定できませんでした。入力内容を確認してください。");
+      await refresh();
+      if (!active.current) return;
+      setSelectedId(recruitment.projectId); setGroup("all"); setQuery("");
+      setNotice(result.message || "面談者を確定し、選択した面談者への面談依頼を作成しました。");
+      requestAnimationFrame(() => { noticeRef.current?.scrollIntoView({ block: "nearest" }); noticeRef.current?.focus({ preventScroll: true }); });
+    } finally { assigningRef.current = false; if (active.current) setAssigning(false); }
+  }
 
   function choose(project: Project) {
     setSelectedId(project.id); setNotice("");
@@ -151,12 +218,23 @@ export default function LeaderDashboard({ user }: { user: DemoUser }) {
   return <>
     <a className="skip-link" href="#dh-leader-title">本文へ移動</a>
     <header className="mast"><div className="dh-leader-mast"><a className="logo" href="/leader" aria-label="DealHunter リーダーホーム"><img src="/logo.svg" width="38" height="38" alt="" /><span>DealHunter</span></a><nav className="topnav" aria-label="リーダーメニュー"><button type="button" className="active" aria-current="page" onClick={() => { headingRef.current?.scrollIntoView({ block: "start" }); headingRef.current?.focus({ preventScroll: true }); }}><Icon name="folder" />担当案件<span className="nav-count">{projects.length}</span></button></nav><div className="dh-leader-account"><span className="dh-leader-role">リーダー</span><strong>{user.name}</strong><form action={logout}><button type="submit" className="logout-btn">ログアウト</button></form></div></div></header>
-    <main className="dh-leader-main"><div className="dh-leader-page-head"><p className="context"><span className="context-mark" />リーダーデスク<span className="sep">/</span>自分の担当案件</p><div className="dh-leader-title-row"><div><h1 id="dh-leader-title" ref={headingRef} tabIndex={-1}>担当案件</h1><p>リーダーに設定されている案件の進捗と内容を確認できます。</p></div><button type="button" className="dh-leader-refresh" disabled={loading} onClick={() => void refresh()}>{loading ? "更新中…" : "更新"}</button></div><div className="dh-leader-summary"><span>担当案件 <b>{projects.length}</b>件</span><span>面談者 <b>{people}</b>名</span><span>入場中 <b>{activeProjects}</b>件</span><small>閲覧のみ</small></div></div>
-      {error && <div ref={errorRef} tabIndex={-1} className="dh-leader-message is-error" role="alert">{error}<button type="button" disabled={loading} onClick={() => void refresh()}>再読み込み</button></div>}
-      {notice && <p className="dh-leader-message" role="status">{notice}</p>}
+    <main className="dh-leader-main"><div className="dh-leader-page-head"><p className="context"><span className="context-mark" />リーダーデスク<span className="sep">/</span>自分の担当案件</p><div className="dh-leader-title-row"><div><h1 id="dh-leader-title" ref={headingRef} tabIndex={-1}>担当案件</h1><p>営業から届いた面談者の選定依頼と、担当案件の進捗を確認できます。</p></div><button type="button" className="dh-leader-refresh" disabled={loading || assigning} onClick={() => void refresh()}>{loading ? "更新中…" : "更新"}</button></div><div className="dh-leader-summary"><span>担当案件 <b>{projects.length}</b>件</span><span>選定待ち <b>{selectionPending}</b>件</span><span>選定済みの面談者 <b>{people}</b>名</span><span>入場中 <b>{activeProjects}</b>件</span><small>面談者の選定・進捗の閲覧</small></div></div>
+      {error && <div ref={errorRef} tabIndex={-1} className="dh-leader-message is-error" role="alert">{error}<button type="button" disabled={loading || assigning} onClick={() => void refresh()}>再読み込み</button></div>}
+      {notice && <p ref={noticeRef} tabIndex={-1} className="dh-leader-message" role="status">{notice}</p>}
       {loading && !data ? <div className="dh-leader-loading" role="status">担当案件を読み込んでいます…</div> : <div className="dh-leader-board">
-        <section className="dh-leader-list-panel" aria-label="担当案件一覧"><div className="dh-leader-filters"><label htmlFor="dh-leader-search">案件名・面談者で検索<input id="dh-leader-search" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="案件名・面談者で検索" /></label><label htmlFor="dh-leader-filter">状態で絞り込み<select id="dh-leader-filter" value={group} onChange={event => setGroup(event.target.value as "all" | StageGroup)}>{groups.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div><div className="dh-leader-list-head"><strong>担当案件の一覧</strong><span>{visible.length} / {projects.length}件</span></div><div ref={listRef} className="dh-leader-project-list">{visible.map(record => <button type="button" className={`dh-leader-project-row${selected?.project.id === record.project.id ? " selected" : ""}`} key={record.project.id} aria-pressed={selected?.project.id === record.project.id} onClick={() => choose(record.project)}><span className="dh-leader-row-title"><strong>{record.project.name}</strong><Icon name="chevright" /></span><span className="dh-leader-row-sales">担当営業 {record.project.salesName} <i>·</i> 面談者 {record.members.length}名</span><span className="dh-leader-row-members">{record.members.map(member => <span key={member.id}><b>{member.name}</b><Status stage={stageOf(member, data?.feedbacks ?? [])} /></span>)}{!record.members.length && <span className="dh-leader-muted">面談情報はまだありません。</span>}</span></button>)}{!visible.length && <div className="dh-leader-empty"><Icon name="folder" /><h2>{projects.length ? "該当する案件はありません" : "担当案件はまだありません"}</h2><p>{projects.length ? "検索条件や状態の絞り込みを変更してください。" : "営業が案件のリーダーに設定すると、ここに表示されます。"}</p></div>}</div></section>
-        <aside ref={detailRef} className="dh-leader-detail" tabIndex={-1} aria-label="選択した案件の詳細">{selected && data ? <><div className="dh-leader-detail-head"><p><Icon name="folder" />担当案件</p><h2>{selected.project.name}</h2><Facts rows={[["担当営業", selected.project.salesName], ["リーダー", selected.project.leaderName || user.name], ["面談者", `${selected.members.length}名`], ["参画者", selected.project.participantName || "未登録"], ["参画者(ひらがな)", selected.project.participantNameKana || "未登録"]]} /></div><section className="dh-leader-section"><h3>案件概要</h3><p className="dh-leader-body">{selected.project.notes || "案件概要はまだ登録されていません。"}</p></section><section className="dh-leader-section dh-leader-members-section"><h3>面談者ごとの進捗 <span>{selected.members.length}名</span></h3><p className="dh-leader-muted">面談者を開くと、日程・所感・面談結果・入場状況を確認できます。</p>{selected.members.map((member, index) => <MemberRecord key={`${selected.project.id}-${member.id}`} member={member} data={data} initiallyOpen={index === 0} />)}{!selected.members.length && <p className="dh-leader-muted">面談情報はまだ登録されていません。</p>}</section><section className="dh-leader-section"><details className="dh-leader-knowledge"><summary>この案件の過去質問 <span>{data.questions.filter(question => question.project === selected.project.id).length}件</span><Icon name="chevright" /></summary>{data.questions.filter(question => question.project === selected.project.id).map((question, index) => <details className="dh-leader-question" key={question.key}><summary><b>Q{index + 1}</b>{question.title}<Icon name="chevright" /></summary><p>{question.context || "この案件の面談で聞かれた質問です。"}</p></details>)}</details></section><button type="button" className="dh-leader-back" onClick={backToList}><Icon name="left" />一覧へ戻る</button></> : <div className="dh-leader-empty"><Icon name="folder" /><h2>案件を選択してください</h2><p>一覧から案件を開くと、概要と面談者ごとの進捗を確認できます。</p></div>}</aside>
+        <section className="dh-leader-list-panel" aria-label="担当案件一覧">
+          <div className="dh-leader-filters"><label htmlFor="dh-leader-search">案件名・面談者で検索<input id="dh-leader-search" type="search" value={query} disabled={assigning} onChange={event => setQuery(event.target.value)} placeholder="案件名・面談者で検索" /></label><label htmlFor="dh-leader-filter">状態で絞り込み<select id="dh-leader-filter" value={group} disabled={assigning} onChange={event => setGroup(event.target.value as "all" | StageGroup)}>{groups.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div>
+          <div className="dh-leader-list-head"><strong>担当案件の一覧</strong><span>{visible.length} / {projects.length}件</span></div>
+          <div ref={listRef} className="dh-leader-project-list">{visible.map(record => <button type="button" className={`dh-leader-project-row${selected?.project.id === record.project.id ? " selected" : ""}`} key={record.project.id} disabled={assigning} aria-pressed={selected?.project.id === record.project.id} onClick={() => choose(record.project)}><span className="dh-leader-row-title"><strong>{record.project.name}</strong><Icon name="chevright" /></span><span className="dh-leader-row-sales">担当営業 {record.project.salesName} <i>·</i> 面談者 {record.recruitment?.status === "pending" ? "未定" : record.members.length ? `${record.members.length}名` : "未登録"}</span><span className="dh-leader-row-members">{record.recruitment?.status === "pending" && <Status stage={{ label: "面談者の選定待ち", group: "selection" }} />}{record.members.map(member => <span key={member.id}><b>{member.name}</b><Status stage={stageOf(member, data?.feedbacks ?? [])} /></span>)}{!record.members.length && record.recruitment?.status !== "pending" && <span className="dh-leader-muted">面談情報はまだありません。</span>}</span></button>)}{!visible.length && <div className="dh-leader-empty"><Icon name="folder" /><h2>{projects.length ? "該当する案件はありません" : "担当案件はまだありません"}</h2><p>{projects.length ? "検索条件や状態の絞り込みを変更してください。" : "営業から選定依頼が届くか、案件のリーダーに設定されると、ここに表示されます。"}</p></div>}</div>
+        </section>
+        <aside ref={detailRef} className="dh-leader-detail" tabIndex={-1} aria-label="選択した案件の詳細">{selected && data ? <>
+          <div className="dh-leader-detail-head"><p><Icon name="folder" />担当案件</p><h2>{selected.project.name}</h2><Facts rows={[["担当営業", selected.project.salesName], ["リーダー", selected.project.leaderName || user.name], ["面談者", selected.recruitment?.status === "pending" ? "未定（リーダーが選定）" : selected.members.length ? `${selected.members.length}名` : "未登録"], ["参画者", selected.project.participantName || "未登録"], ["参画者(ひらがな)", selected.project.participantNameKana || "未登録"]]} /></div>
+          <section className="dh-leader-section"><h3>案件概要</h3><p className="dh-leader-body">{selected.project.notes || "案件概要はまだ登録されていません。"}</p></section>
+          {selected.recruitment?.status === "pending" && <RecruitmentAssignment key={selected.recruitment.id} recruitment={selected.recruitment} teamMembers={data.teamMembers ?? []} pending={assigning} onAssign={assign} />}
+          <section className="dh-leader-section dh-leader-members-section"><h3>{selected.recruitment?.status === "pending" ? "選定後の進め方" : <>面談者ごとの進捗 <span>{selected.members.length ? `${selected.members.length}名` : "未登録"}</span></>}</h3><p className="dh-leader-muted">{selected.recruitment?.status === "pending" ? "面談者を確定すると、ここに本人ごとの進捗が表示されます。日程回答・所感の提出は面談者本人が、日時・面談結果・初回入場の登録は営業が行います。" : "面談者を開くと、日程・所感・面談結果・入場状況を閲覧できます。これらの回答・登録は代行できません。"}</p>{selected.members.map((member, index) => <MemberRecord key={`${selected.project.id}-${member.id}`} member={member} data={data} initiallyOpen={index === 0} />)}{!selected.members.length && selected.recruitment?.status !== "pending" && <p className="dh-leader-muted">面談情報はまだ登録されていません。</p>}</section>
+          <section className="dh-leader-section"><details className="dh-leader-knowledge"><summary>この案件の過去質問 <span>{data.questions.filter(question => question.project === selected.project.id).length}件</span><Icon name="chevright" /></summary>{data.questions.filter(question => question.project === selected.project.id).map((question, index) => <details className="dh-leader-question" key={question.key}><summary><b>Q{index + 1}</b>{question.title}<Icon name="chevright" /></summary><p>{question.context || "この案件の面談で聞かれた質問です。"}</p></details>)}</details></section>
+          <button type="button" className="dh-leader-back" onClick={backToList}><Icon name="left" />一覧へ戻る</button>
+        </> : <div className="dh-leader-empty"><Icon name="folder" /><h2>案件を選択してください</h2><p>一覧から案件を開くと、概要と面談者ごとの進捗を確認できます。</p></div>}</aside>
       </div>}
     </main>
   </>;

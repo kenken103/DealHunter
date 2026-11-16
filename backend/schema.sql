@@ -1,19 +1,22 @@
 CREATE TABLE IF NOT EXISTS app_users (
     id text PRIMARY KEY,
     display_name text NOT NULL,
-    role text NOT NULL CHECK (role IN ('sales', 'student', 'leader'))
+    role text NOT NULL CHECK (role IN ('sales', 'student', 'leader', 'admin'))
 );
 
 -- Upgrade only the known application-role check, preserving every existing user.
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app_users'::regclass AND conname='app_users_role_check'
-   AND position('leader' IN pg_get_constraintdef(oid))=0) THEN
+   AND position('admin' IN pg_get_constraintdef(oid))=0) THEN
   ALTER TABLE app_users DROP CONSTRAINT app_users_role_check;
  END IF;
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='app_users'::regclass AND conname='app_users_role_check') THEN
-  ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK(role IN('sales','student','leader'));
+  ALTER TABLE app_users ADD CONSTRAINT app_users_role_check CHECK(role IN('sales','student','leader','admin'));
  END IF;
 END $$;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email text;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_hash text;
+CREATE UNIQUE INDEX IF NOT EXISTS app_users_email_unique_idx ON app_users(lower(email)) WHERE email IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS projects (
     id text PRIMARY KEY,
@@ -24,6 +27,8 @@ CREATE TABLE IF NOT EXISTS projects (
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS leader_id text REFERENCES app_users(id);
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS participant_name text NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS participant_name_kana text NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS upper_company text NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS end_company text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS projects_leader_idx ON projects(leader_id) WHERE leader_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS project_attachments (
  project_id text PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
@@ -67,12 +72,30 @@ CREATE INDEX IF NOT EXISTS scheduled_events_date_idx ON scheduled_events(event_d
 CREATE INDEX IF NOT EXISTS interview_questions_project_idx ON interview_questions(project_id);
 
 CREATE TABLE IF NOT EXISTS app_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS leader_members (
+ leader_id text NOT NULL REFERENCES app_users(id), student_id text NOT NULL UNIQUE REFERENCES app_users(id),
+ active boolean NOT NULL DEFAULT true, PRIMARY KEY(leader_id,student_id), CHECK(leader_id<>student_id)
+);
+CREATE TABLE IF NOT EXISTS recruitments (
+ id text PRIMARY KEY, project_id text NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+ status text NOT NULL DEFAULT 'pending' CHECK(status IN('pending','assigned')),
+ schedule_mode text NOT NULL CHECK(schedule_mode IN('candidates','availability')),
+ requested_dates date[] NOT NULL DEFAULT '{}' CHECK(array_position(requested_dates,NULL) IS NULL AND (schedule_mode='availability' OR cardinality(requested_dates)=0)),
+ created_at timestamptz NOT NULL DEFAULT now(), assigned_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS recruitment_candidate_slots (
+ id text PRIMARY KEY, recruitment_id text NOT NULL REFERENCES recruitments(id) ON DELETE CASCADE,
+ start_at timestamp NOT NULL, end_at timestamp,
+ CHECK(end_at IS NULL OR (end_at>start_at AND end_at::date=start_at::date)), UNIQUE(recruitment_id,start_at)
+);
 CREATE TABLE IF NOT EXISTS interview_requests (
  id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id), student_id text NOT NULL REFERENCES app_users(id),
  status text NOT NULL CHECK (status IN ('requested','responded','confirmed')), confirmed_slot_id text, created_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS schedule_mode text NOT NULL DEFAULT 'candidates' CHECK (schedule_mode IN ('candidates','availability'));
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS requested_dates date[] NOT NULL DEFAULT '{}' CHECK (array_position(requested_dates,NULL) IS NULL AND (schedule_mode='availability' OR cardinality(requested_dates)=0));
+ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS recruitment_id text REFERENCES recruitments(id);
+CREATE INDEX IF NOT EXISTS interview_requests_recruitment_idx ON interview_requests(recruitment_id) WHERE recruitment_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS request_attachments (
  request_id text PRIMARY KEY REFERENCES interview_requests(id) ON DELETE CASCADE,
  filename text NOT NULL,
@@ -122,18 +145,21 @@ CREATE INDEX IF NOT EXISTS task_acknowledgements_project_idx ON task_acknowledge
 CREATE OR REPLACE VIEW active_tasks AS
  SELECT 'request-'||r.id AS key,p.id AS project_id,p.sales_id,r.student_id,p.name AS project,u.display_name AS person,'営業' AS owner,
  '面談日時を確定' AS title,'受講者の回答から候補日時を選び、面談URLを登録してください。' AS body,
- 'schedule' AS action,r.id AS request_id,NULL::text AS event_id,r.task_revision AS revision
+ 'schedule' AS action,r.id AS request_id,NULL::text AS event_id,r.task_revision AS revision,NULL::text AS recruitment_id
  FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id WHERE r.status='responded'
  UNION ALL
  SELECT 'entry-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'営業','初回入場を登録','合格した案件の集合日時・場所・当日の案内を登録してください。',
- 'entry',e.request_id,e.id,1::bigint FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
+ 'entry',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
  WHERE e.kind='meet' AND e.result='passed' AND NOT EXISTS(SELECT 1 FROM scheduled_events en WHERE en.parent_event_id=e.id)
  UNION ALL
  SELECT 'feedback-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'受講者','面談所感の提出待ち','業務内容・工程・リモート頻度・感想・質問の記録を待っています。',
- 'feedback',e.request_id,e.id,1::bigint FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
+ 'feedback',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
  WHERE e.kind='meet' AND NOT EXISTS(SELECT 1 FROM interview_feedback f WHERE f.event_id=e.id)
  AND (e.event_date <= DATE '2026-11-05' OR e.request_id IS NOT NULL)
  UNION ALL
  SELECT 'result-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'営業','面談結果・初回入場を登録','受講者から面談所感が届きました。内容を確認し、合否と初回入場の案内を登録してください。',
- 'entry',e.request_id,e.id,1::bigint FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
- WHERE e.kind='meet' AND e.result='pending' AND EXISTS(SELECT 1 FROM interview_feedback f WHERE f.event_id=e.id);
+ 'entry',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
+ WHERE e.kind='meet' AND e.result='pending' AND EXISTS(SELECT 1 FROM interview_feedback f WHERE f.event_id=e.id)
+ UNION ALL
+ SELECT 'assignment-'||a.id,p.id,p.sales_id,NULL::text,p.name,'面談者未定','リーダー','面談者を選定','担当リーダーが自分の部下から面談者を1名以上選択してください。',
+ 'assign',NULL::text,NULL::text,1::bigint,a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE a.status='pending';

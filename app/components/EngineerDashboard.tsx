@@ -226,6 +226,7 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
     const response = await fetch("/api/dashboard", { cache: "no-store", signal });
     if (!active.current || sequence !== fetchSequence.current) return null;
     if (response.status === 401) { router.replace("/login"); throw new Error("ログインの有効期限が切れました。"); }
+    if (response.status === 403) { setData(null); router.replace("/"); return null; }
     const body = await response.json();
     if (!active.current || sequence !== fetchSequence.current) return null;
     if (!response.ok) throw new Error(body.error || "データを取得できませんでした。もう一度お試しください。");

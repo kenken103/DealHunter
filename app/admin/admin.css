@@ -1,0 +1,56 @@
+.dh-admin-shell{min-height:100svh;background:#f5f7fb;color:#1e2e48;font-size:14px;line-height:1.7}
+.dh-admin-header{background:#17369a;color:#fff;padding:0 32px;min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.dh-admin-brand{display:flex;align-items:center;gap:7px;font-family:Arial,sans-serif;font-size:28px;font-style:italic;font-weight:800;letter-spacing:-1.5px}
+.dh-admin-user{display:flex;align-items:center;gap:18px;font-size:13px}
+.dh-admin-user>span:first-child{color:#d2ddff}
+.dh-admin-user button{border:1px solid #91a6e5;border-radius:4px;padding:7px 13px;font-size:12px}
+.dh-admin-shell button:focus-visible,.dh-admin-shell a:focus-visible,.dh-admin-shell input:focus-visible,.dh-admin-shell select:focus-visible{outline:3px solid #668be4;outline-offset:3px}
+main.dh-admin-main{max-width:1460px;margin:0 auto;padding:36px clamp(20px,3vw,48px) 50px;display:block}
+.dh-admin-eyebrow{font-size:12px;color:#58709a;margin-bottom:6px}
+.dh-admin-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:24px}
+.dh-admin-heading h1{font-size:30px;line-height:1.5;color:#142641}
+.dh-admin-heading p{font-size:13px;color:#69778b;margin-top:7px}
+.dh-admin-button{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:8px 17px;border-radius:5px;border:1px solid #c5d0e1;background:#fff;color:#274466;font-weight:650;font-size:13px;cursor:pointer}
+.dh-admin-button.is-primary{background:#2447aa;border-color:#2447aa;color:#fff}
+.dh-admin-button:hover{background:#f2f5fb}.dh-admin-button.is-primary:hover{background:#17398f}
+.dh-admin-button:disabled{opacity:.55;cursor:default}
+.dh-admin-summary{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#66778e;margin-bottom:20px}
+.dh-admin-summary strong{font-size:20px;color:#263e60;padding:0 3px}
+.dh-admin-layout{display:grid;grid-template-columns:minmax(330px,1fr) minmax(340px,.9fr);gap:20px;align-items:start}
+.dh-admin-panel{min-width:0;border:1px solid #dce3ef;border-radius:8px;background:#fff;overflow:hidden;box-shadow:0 2px 8px #20385a05}
+.dh-admin-panel h2{font-size:17px;color:#233d62}
+.dh-admin-list-head,.dh-admin-editor-head{padding:23px 25px;border-bottom:1px solid #e4e9f1}
+.dh-admin-filters{margin-top:18px;display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:12px}
+.dh-admin-field{display:grid;gap:7px;min-width:0}
+.dh-admin-field>label{font-size:12px;font-weight:650;color:#536984}
+.dh-admin-field input,.dh-admin-field select{width:100%;min-width:0;min-height:43px;border:1px solid #becbde;padding:8px 11px;border-radius:4px;background:#fff;color:#2e4566}
+.dh-admin-list-count{font-size:12px;color:#6d7e95;padding:13px 25px;border-bottom:1px solid #e7ebf2}
+.dh-admin-user-list{list-style:none;margin:0;padding:0;max-height:680px;overflow:auto}
+.dh-admin-account{display:flex;width:100%;text-align:left;gap:13px;justify-content:space-between;padding:19px 25px;border-bottom:1px solid #e9edf4;background:#fff;color:#203751;cursor:pointer}
+.dh-admin-account:hover{background:#f7f9fd}
+.dh-admin-account.is-selected{background:#f0f5ff;box-shadow:inset 3px 0 #3c5db7}
+.dh-admin-account-main{display:grid;gap:4px;min-width:0}
+.dh-admin-account-main strong{font-size:14px;overflow-wrap:anywhere}
+.dh-admin-account-main>span{font-size:12px;color:#718096;overflow-wrap:anywhere}
+.dh-admin-role-badge{align-self:flex-start;flex:0 0 auto;border:1px solid #d7e1ee;border-radius:4px;background:#f7f9fc;padding:2px 8px;color:#48638b;font-size:11px;white-space:nowrap}
+.dh-admin-role-badge.is-admin{background:#fff9df;border-color:#e9dca5;color:#79621d}
+.dh-admin-editor-head h2{overflow-wrap:anywhere}.dh-admin-editor-head p{color:#748196;font-size:12px;overflow-wrap:anywhere;margin-top:4px}
+.dh-admin-editor-body{padding:25px;display:grid;gap:23px}
+.dh-admin-edit-fields{display:grid;gap:20px;border:0;margin:0;padding:0;min-width:0}
+.dh-admin-note{color:#6f7e93;font-size:12px;line-height:1.9}
+.dh-admin-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+.dh-admin-notice,.dh-admin-error{border:1px solid #c6d9ce;border-left:3px solid #4d8a62;border-radius:5px;padding:13px 17px;background:#f1faf4;color:#38634a;margin-bottom:20px;font-size:13px;overflow-wrap:anywhere}
+.dh-admin-error{background:#fff5f3;border-color:#edc4bc;border-left-color:#ab4937;color:#893f32}
+.dh-admin-editor-body>.dh-admin-error{margin-bottom:0}
+.dh-admin-empty{padding:35px 25px;color:#718198;font-size:13px}
+.dh-admin-review{padding:19px;border:1px solid #ccd8ed;background:#f7faff;border-radius:5px}
+.dh-admin-review h3{font-size:15px;color:#29466e;margin-bottom:13px}
+.dh-admin-review dl{display:grid;gap:12px}
+.dh-admin-review dl>div{display:grid;grid-template-columns:86px minmax(0,1fr);gap:10px}
+.dh-admin-review dt{color:#6a7e99;font-size:12px}.dh-admin-review dd{font-size:13px;overflow-wrap:anywhere}
+.dh-admin-review .dh-admin-note{margin-top:17px}
+.dh-admin-editor-body .dh-admin-role-badge{justify-self:start}
+.dh-admin-skip{position:absolute;left:16px;top:-80px;padding:12px;background:#fff;color:#2447aa;z-index:5}.dh-admin-skip:focus{top:12px}
+@media(max-width:1000px){.dh-admin-layout{grid-template-columns:minmax(280px,.9fr) minmax(300px,1fr)}.dh-admin-filters{grid-template-columns:1fr}.dh-admin-header{padding:0 24px}.dh-admin-list-head,.dh-admin-editor-head{padding:20px}.dh-admin-account{padding:17px 20px}.dh-admin-editor-body{padding:22px}}
+@media(max-width:760px){.dh-admin-layout{grid-template-columns:1fr}.dh-admin-header{padding:12px 18px;align-items:flex-start;gap:15px}.dh-admin-brand{font-size:24px;margin-top:3px}.dh-admin-brand img{width:30px;height:30px}.dh-admin-user{gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:180px;font-size:11px}.dh-admin-user button{padding:4px 8px;font-size:11px}.dh-admin-user>span:first-child{display:none}main.dh-admin-main{padding:25px 16px 35px}.dh-admin-heading h1{font-size:25px}.dh-admin-heading p{font-size:12px}.dh-admin-heading{gap:12px}.dh-admin-heading>.dh-admin-button{flex:none;padding:7px 12px}.dh-admin-summary{gap:13px}.dh-admin-summary strong{font-size:18px}.dh-admin-filters{grid-template-columns:minmax(0,1fr) 125px}.dh-admin-field input,.dh-admin-field select{font-size:16px}.dh-admin-user-list{max-height:380px}.dh-admin-account{padding:16px 20px}.dh-admin-editor-body{padding:20px}.dh-admin-actions .dh-admin-button{flex:1}.dh-admin-review{padding:15px}}
+@media(prefers-reduced-motion:no-preference){.dh-admin-button,.dh-admin-account{transition:background-color .12s}}

@@ -12,7 +12,11 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
 import java.sql.*;
 import java.text.Normalizer;
 import java.time.LocalDate;
@@ -30,11 +34,17 @@ public final class DealHunterServer {
     private static final String DATABASE_USER = env("DEALHUNTER_DATABASE_USER", "dealhunter");
     private static final String DATABASE_PASSWORD = env("DEALHUNTER_DATABASE_PASSWORD", "");
     private static final String API_KEY = env("DEALHUNTER_API_KEY", "");
-    private static final String API_VERSION = "workflow-v7";
+    private static final String API_VERSION = "workflow-v10";
+    private static final int PASSWORD_ITERATIONS = 600_000;
+    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final String DUMMY_PASSWORD_HASH = passwordHash("unused-user-timing-padding");
+    private static final Map<String,LoginAttempts> LOGIN_ATTEMPTS = new LinkedHashMap<>();
+    private record LoginAttempts(int count,long expiresAt) {}
     private static String dashboardSql;
     private record User(String id, String role, String name) {}
     private record Slot(LocalDateTime start, LocalDateTime end) {}
     private record Attachment(String name, byte[] content) {}
+    private record IssuedRequests(List<String> ids, List<Map<String,Object>> previews) {}
     private static final class ApiError extends RuntimeException {
         final int status;
         ApiError(int status, String message) { super(message); this.status = status; }
@@ -59,6 +69,7 @@ public final class DealHunterServer {
                 s.execute(Files.readString(backend.resolve("schema.sql"), StandardCharsets.UTF_8));
                 s.execute(Files.readString(backend.resolve("seed-users.sql"), StandardCharsets.UTF_8));
             }
+            seedCredentials(c,backend);
             c.commit();
         }
         dashboardSql = Files.readString(backend.resolve("dashboard.sql"), StandardCharsets.UTF_8);
@@ -100,6 +111,25 @@ public final class DealHunterServer {
         JsonNode n = body.get(key);
         require(n == null || n.isNull() || n.isTextual(), 400, key + "の形式が正しくありません。");
         return n == null || n.isNull() ? "" : n.asText().trim();
+    }
+    private static String companyName(JsonNode body, String key, String label, boolean required) {
+        JsonNode value=body.get(key);
+        if(value==null) {
+            require(!required,400,label+"を入力してください。");
+            return "";
+        }
+        require(value.isTextual(),400,label+"は文字列で入力してください。");
+        String name=value.asText();
+        int start=0,end=name.length();
+        while(start<end && companyWhitespace(name.codePointAt(start))) start+=Character.charCount(name.codePointAt(start));
+        while(end>start && companyWhitespace(name.codePointBefore(end))) end-=Character.charCount(name.codePointBefore(end));
+        name=name.substring(start,end);
+        require(!required || !name.isEmpty(),400,label+"を入力してください。");
+        require(name.length()<=200,400,label+"は200文字以内で入力してください。");
+        return name;
+    }
+    private static boolean companyWhitespace(int codePoint) {
+        return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint) || codePoint==0x85 || codePoint==0xFEFF;
     }
     private static LocalDateTime date(String value) {
         try { return LocalDateTime.parse(value); }
@@ -146,6 +176,23 @@ public final class DealHunterServer {
     private static String slotLabel(Slot slot) {
         return slot.start.toString().replace('T',' ') + (slot.end == null ? "" : "〜" + slot.end.toLocalTime());
     }
+    private static String scheduleLabel(String mode, List<LocalDate> dates, List<Slot> slots) {
+        return mode.equals("availability")
+            ? (dates.isEmpty() ? "日時の指定なし。参加可能な開始日時を回答してください。" : String.join(" ／ ",dates.stream().map(LocalDate::toString).toList()) + " の参加可能な開始日時を回答してください。")
+            : String.join(" ／ ",slots.stream().map(DealHunterServer::slotLabel).toList());
+    }
+    private static String datesArray(List<LocalDate> dates) {
+        return "{" + String.join(",",dates.stream().map(LocalDate::toString).toList()) + "}";
+    }
+    private static List<String> studentIds(JsonNode value) {
+        require(value!=null && value.isArray() && !value.isEmpty(),400,"面談者を1名以上選んでください。");
+        Set<String> ids=new LinkedHashSet<>();
+        for(JsonNode member:value) {
+            require(member.isTextual() && !member.asText().trim().isEmpty(),400,"面談者の選択が正しくありません。");
+            require(ids.add(member.asText().trim()),400,"同じ面談者を重複して選択しないでください。");
+        }
+        return List.copyOf(ids);
+    }
     private static String httpUrl(String value) {
         try {
             URI uri = URI.create(value);
@@ -160,9 +207,158 @@ public final class DealHunterServer {
         require(row != null, 401, "ログインしてください。");
         return new User(str(row,"id"), str(row,"role"), str(row,"display_name"));
     }
+    private static String passwordHash(String password) {
+        byte[] salt=new byte[16]; RANDOM.nextBytes(salt);
+        byte[] hash=derivePassword(password,salt,PASSWORD_ITERATIONS);
+        return "pbkdf2-sha256$"+PASSWORD_ITERATIONS+"$"+Base64.getEncoder().encodeToString(salt)+"$"+Base64.getEncoder().encodeToString(hash);
+    }
+    private static byte[] derivePassword(String password, byte[] salt, int iterations) {
+        PBEKeySpec spec=new PBEKeySpec(password.toCharArray(),salt,iterations,256);
+        try { return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded(); }
+        catch(java.security.GeneralSecurityException exception) { throw new IllegalStateException("Password hashing is unavailable",exception); }
+        finally { spec.clearPassword(); }
+    }
+    private static boolean passwordMatches(String password, String encoded) {
+        try {
+            String[] parts=encoded.split("\\$",-1);
+            if(parts.length!=4 || !parts[0].equals("pbkdf2-sha256")) return false;
+            int iterations=Integer.parseInt(parts[1]);
+            if(iterations<600_000 || iterations>2_000_000) return false;
+            byte[] salt=Base64.getDecoder().decode(parts[2]), expected=Base64.getDecoder().decode(parts[3]);
+            if(salt.length<16 || expected.length!=32) return false;
+            return MessageDigest.isEqual(expected,derivePassword(password,salt,iterations));
+        } catch(IllegalArgumentException exception) { return false; }
+    }
+    private static void seedCredentials(Connection c, Path backend) throws Exception {
+        List<String[]> samples=new ArrayList<>();
+        samples.add(new String[]{"sales-aoki","sales.aoki@dealhunter.example","demo-sales"});
+        for(String alias:List.of("takahashi","yamamoto","mori","ito","kobayashi","sasaki","tanaka","kimura","inoue"))
+            samples.add(new String[]{"student-"+alias,"engineer."+alias+"@dealhunter.example","demo-engineer"});
+        for(String alias:List.of("sato","suzuki")) samples.add(new String[]{"leader-"+alias,"leader."+alias+"@dealhunter.example","demo-leader"});
+        for(String[] sample:samples) {
+            if(one(c,"SELECT id FROM app_users WHERE id=? AND email IS NULL AND password_hash IS NULL",sample[0])!=null)
+                execute(c,"UPDATE app_users SET email=?,password_hash=? WHERE id=? AND email IS NULL AND password_hash IS NULL",sample[1],passwordHash(sample[2]),sample[0]);
+        }
+        if(one(c,"SELECT id FROM app_users WHERE role='admin' OR id='admin-initial' OR lower(email)='admin@legarea.jp' LIMIT 1")!=null) return;
+        Path directory=backend.toAbsolutePath().normalize().getParent().resolve(".local");
+        Files.createDirectories(directory);
+        Path filename=directory.resolve("initial-admin-password.txt");
+        String password;
+        if(Files.exists(filename)) password=Files.readString(filename,StandardCharsets.UTF_8).strip();
+        else {
+            byte[] bytes=new byte[24]; RANDOM.nextBytes(bytes);
+            password=Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+            Files.writeString(filename,password+System.lineSeparator(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
+        }
+        require(password.length()>=10 && password.length()<=128,500,"初期管理者パスワードの設定を確認してください。");
+        execute(c,"INSERT INTO app_users(id,display_name,role,email,password_hash) VALUES('admin-initial','管理者','admin','admin@legarea.jp',?)",passwordHash(password));
+    }
+    private static Map<String,String> publicUser(Map<String,Object> row) {
+        return Map.of("id",str(row,"id"),"name",str(row,"display_name"),"role",str(row,"role"));
+    }
+    private static String registrationEmail(JsonNode body) {
+        JsonNode value=body.get("email");
+        require(value!=null && value.isTextual() && value.asText().codePoints().noneMatch(Character::isISOControl),400,"メールアドレスを入力してください。");
+        String email=value.asText().trim().toLowerCase(Locale.ROOT);
+        String atom="[a-z0-9!#$%&'*+/=?^_`{|}~-]+";
+        require(email.length()<=254 && email.matches(atom+"(?:\\."+atom+")*@legarea\\.jp") && email.indexOf('@')<=64,400,"メールアドレスは @legarea.jp のものを入力してください。");
+        return email;
+    }
+    private static Object registerUser(Connection c, JsonNode body) throws SQLException {
+        require(body.size()==4 && body.has("name") && body.has("email") && body.has("password") && body.has("role"),400,"氏名・メールアドレス・パスワード・役割を指定してください。");
+        String name=text(body,"name"), email=registrationEmail(body), selectedRole=text(body,"role");
+        require(name.length()<=100 && name.codePoints().noneMatch(Character::isISOControl),400,"氏名は100文字以内で入力してください。");
+        require(List.of("sales","student","leader").contains(selectedRole),400,"役割は営業・エンジニア・リーダーから選択してください。");
+        JsonNode passwordNode=body.get("password");
+        require(passwordNode!=null && passwordNode.isTextual() && passwordNode.asText().length()>=10 && passwordNode.asText().length()<=128,400,"パスワードは10文字以上128文字以内で入力してください。");
+        require(one(c,"SELECT id FROM app_users WHERE lower(email)=?",email)==null,409,"このメールアドレスは登録済みです。");
+        String userId=id("U-");
+        execute(c,"INSERT INTO app_users(id,display_name,role,email,password_hash) VALUES(?,?,?,?,?)",userId,name,selectedRole,email,passwordHash(passwordNode.asText()));
+        return Map.of("message","アカウントを登録しました。","user",Map.of("id",userId,"name",name,"role",selectedRole));
+    }
+    private static Object loginUser(Connection c, JsonNode body) throws SQLException {
+        JsonNode emailNode=body.get("email"),passwordNode=body.get("password");
+        require(emailNode!=null && emailNode.isTextual() && emailNode.asText().length()<=254 && passwordNode!=null && passwordNode.isTextual() && passwordNode.asText().length()<=128,401,"メールアドレスまたはパスワードが正しくありません。");
+        String email=emailNode.asText().trim().toLowerCase(Locale.ROOT),password=passwordNode.asText();
+        reserveLoginAttempt(email);
+        Map<String,Object> row=one(c,"SELECT id,display_name,role,password_hash FROM app_users WHERE lower(email)=?",email);
+        boolean valid=passwordMatches(password,row==null?DUMMY_PASSWORD_HASH:str(row,"password_hash"));
+        require(row!=null && valid,401,"メールアドレスまたはパスワードが正しくありません。");
+        synchronized(LOGIN_ATTEMPTS) { LOGIN_ATTEMPTS.remove(email); }
+        return Map.of("user",publicUser(row));
+    }
+    private static void reserveLoginAttempt(String email) {
+        synchronized(LOGIN_ATTEMPTS) {
+            long now=System.currentTimeMillis();
+            LOGIN_ATTEMPTS.entrySet().removeIf(entry -> entry.getValue().expiresAt()<=now);
+            LoginAttempts attempts=LOGIN_ATTEMPTS.get(email);
+            require(attempts==null || attempts.count()<10,429,"メールアドレスまたはパスワードが正しくありません。");
+            if(attempts==null && LOGIN_ATTEMPTS.size()>=4096) LOGIN_ATTEMPTS.remove(LOGIN_ATTEMPTS.keySet().iterator().next());
+            LOGIN_ATTEMPTS.put(email,new LoginAttempts(attempts==null?1:attempts.count()+1,attempts==null?now+300_000:attempts.expiresAt()));
+        }
+    }
+    private static Object currentUser(Connection c, String userId) throws SQLException {
+        Map<String,Object> row=one(c,"SELECT id,display_name,role FROM app_users WHERE id=?",userId);
+        require(row!=null,404,"利用者が見つかりません。");
+        return Map.of("user",publicUser(row));
+    }
+    private static Map<String,Object> adminUser(Map<String,Object> row) {
+        Map<String,Object> value=new LinkedHashMap<>();
+        value.put("id",str(row,"id")); value.put("name",str(row,"display_name")); value.put("email",row.get("email"));
+        value.put("role",str(row,"role")); value.put("leaderId",row.get("leader_id")); value.put("leaderName",row.get("leader_name"));
+        value.put("isDemo",str(row,"email").endsWith("@dealhunter.example"));
+        return value;
+    }
+    private static final String ADMIN_USER_SELECT="SELECT u.id,u.display_name,u.email,u.role,m.leader_id,lu.display_name AS leader_name FROM app_users u LEFT JOIN leader_members m ON m.student_id=u.id AND m.active AND u.role='student' LEFT JOIN app_users lu ON lu.id=m.leader_id AND lu.role='leader'";
+    private static Object listUsers(Connection c, User user) throws SQLException {
+        role(user,"admin");
+        List<Map<String,Object>> users=new ArrayList<>(); List<Map<String,String>> leaders=new ArrayList<>();
+        try(PreparedStatement statement=prepared(c,ADMIN_USER_SELECT+" ORDER BY lower(COALESCE(u.email,'')),u.id"); ResultSet rows=statement.executeQuery()) {
+            while(rows.next()) {
+                Map<String,Object> row=new HashMap<>();
+                for(int index=1;index<=rows.getMetaData().getColumnCount();index++) row.put(rows.getMetaData().getColumnLabel(index),rows.getObject(index));
+                users.add(adminUser(row));
+                if(str(row,"role").equals("leader")) leaders.add(Map.of("id",str(row,"id"),"name",str(row,"display_name")));
+            }
+        }
+        return Map.of("users",users,"leaders",leaders);
+    }
+    private static Object updateUser(Connection c, User user, String userId, JsonNode body) throws SQLException {
+        role(user,"admin");
+        // The handler obtains the exclusive account-edit advisory lock before
+        // authenticating. Ordinary user requests hold the matching shared lock.
+        require(body.has("role") && body.size()==(body.has("leaderId")?2:1),400,"役割と所属リーダーを指定してください。");
+        String nextRole=text(body,"role");
+        require(List.of("sales","student","leader","admin").contains(nextRole),400,"役割を正しく選択してください。");
+        Map<String,Object> target=one(c,"SELECT id,role FROM app_users WHERE id=? FOR UPDATE",userId);
+        require(target!=null,404,"利用者が見つかりません。");
+        String previousRole=str(target,"role");
+        if(previousRole.equals("admin") && !nextRole.equals("admin"))
+            require(((Number)one(c,"SELECT count(*) AS n FROM app_users WHERE role='admin'").get("n")).longValue()>1,409,"最後の管理者の役割は変更できません。別の管理者を先に登録してください。");
+        if(previousRole.equals("leader") && !nextRole.equals("leader")) {
+            require(one(c,"SELECT student_id FROM leader_members WHERE leader_id=? AND active LIMIT 1",userId)==null,409,"先に部下の所属リーダーを変更してください。");
+            require(one(c,"SELECT a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE p.leader_id=? AND a.status='pending' LIMIT 1",userId)==null,409,"面談者の選定待ち案件があります。選定を完了してから役割を変更してください。");
+        }
+        String leaderId=null;
+        if(body.has("leaderId")) {
+            JsonNode leader=body.get("leaderId");
+            require(leader.isNull() || leader.isTextual(),400,"所属リーダーを正しく選択してください。");
+            leaderId=leader.isNull()?null:leader.asText().trim();
+            if(leaderId!=null && leaderId.isEmpty()) leaderId=null;
+            require(nextRole.equals("student") || leaderId==null,400,"所属リーダーを指定できるのはエンジニアだけです。");
+            if(leaderId!=null) require(!leaderId.equals(userId) && one(c,"SELECT id FROM app_users WHERE id=? AND role='leader'",leaderId)!=null,400,"登録済みのリーダーを選択してください。");
+        } else if(previousRole.equals("student") && nextRole.equals("student")) {
+            Map<String,Object> membership=one(c,"SELECT m.leader_id FROM leader_members m JOIN app_users l ON l.id=m.leader_id AND l.role='leader' WHERE m.student_id=? AND m.active",userId);
+            if(membership!=null) leaderId=str(membership,"leader_id");
+        }
+        execute(c,"UPDATE app_users SET role=? WHERE id=?",nextRole,userId);
+        if(!nextRole.equals("student") || leaderId==null) execute(c,"UPDATE leader_members SET active=false WHERE student_id=?",userId);
+        else execute(c,"INSERT INTO leader_members(leader_id,student_id,active) VALUES(?,?,true) ON CONFLICT(student_id) DO UPDATE SET leader_id=EXCLUDED.leader_id,active=true",leaderId,userId);
+        return Map.of("message","役割と所属を更新しました。","user",adminUser(one(c,ADMIN_USER_SELECT+" WHERE u.id=?",userId)));
+    }
     private static Map<String, Object> request(Connection c, User user, String id, String requiredRole) throws SQLException {
         role(user, requiredRole);
-        Map<String, Object> row = one(c, "SELECT r.*,p.sales_id,p.name AS project_name,p.notes,u.display_name AS person FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id WHERE r.id=? FOR UPDATE OF r", id);
+        Map<String, Object> row = one(c, "SELECT r.*,p.sales_id,p.name AS project_name,p.notes,u.display_name AS person,su.display_name AS sales_name FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id JOIN app_users su ON su.id=p.sales_id WHERE r.id=? FOR UPDATE OF r", id);
         require(row != null, 404, "面談依頼が見つかりません。");
         require(user.id.equals(str(row, requiredRole.equals("sales") ? "sales_id" : "student_id")), 403, "この面談依頼は操作できません。");
         return row;
@@ -220,19 +416,35 @@ public final class DealHunterServer {
         try(var output=exchange.getResponseBody()) { output.write(bytes); }
     }
 
+    private static IssuedRequests issueRequests(Connection c, String projectId, String project, String summary,
+            String scheduleMode, List<LocalDate> requestedDates, List<Slot> slots, Map<String,String> students, String recruitmentId) throws Exception {
+        List<String> requestIds=new ArrayList<>();
+        List<Map<String,Object>> previews=new ArrayList<>();
+        String times=scheduleLabel(scheduleMode,requestedDates,slots);
+        for(var member:students.entrySet()) {
+            String requestId=id("R-");
+            execute(c,"INSERT INTO interview_requests(id,project_id,student_id,status,schedule_mode,requested_dates,recruitment_id) VALUES(?,?,?,'requested',?,?::date[],?)",requestId,projectId,member.getKey(),scheduleMode,datesArray(requestedDates),recruitmentId);
+            for(Slot slot:slots) execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at) VALUES(?,?,?,?)",id("S-"),requestId,slot.start,slot.end);
+            requestIds.add(requestId);
+            previews.add(preview(c,projectId,member.getKey(),"lark","面談依頼の通知内容",List.of(line("宛先","面談連絡グループ"),line("メンション","@"+member.getValue()),line("案件",project),line("概要",summary),line(scheduleMode.equals("availability")?"日程の確認":"候補日時",times),line("面談ページ","http://127.0.0.1:3100/engineer?request="+requestId)),"面談依頼が来ました。概要を確認し、営業へ参加可能な日時を回答してください。外部送信は行っていません。"));
+        }
+        return new IssuedRequests(requestIds,previews);
+    }
+
     private static Object createRequest(Connection c, User user, JsonNode body) throws Exception {
         role(user,"sales");
+        String upperCompany=companyName(body,"upperCompany","上位会社",true),endCompany=companyName(body,"endCompany","エンド企業",false);
         String project = text(body,"project"), summary = text(body,"summary");
+        String assignmentMode=body.has("assignmentMode")?text(body,"assignmentMode"):"direct";
+        require(assignmentMode.equals("direct") || assignmentMode.equals("leader"),400,"面談者の選定方法が正しくありません。");
+        boolean leaderAssignment=assignmentMode.equals("leader");
         boolean multiplePayload=body.has("studentIds");
         List<String> memberIds=new ArrayList<>();
-        if(multiplePayload) {
+        if(leaderAssignment) {
             JsonNode members=body.get("studentIds");
-            require(members.isArray() && !members.isEmpty(),400,"面談者を1名以上選んでください。");
-            for(JsonNode member:members) {
-                require(member.isTextual() && !member.asText().trim().isEmpty(),400,"面談者の選択が正しくありません。");
-                memberIds.add(member.asText().trim());
-            }
-        } else memberIds.add(text(body,"studentId"));
+            require(!body.has("studentId") && (members==null || (members.isArray() && members.isEmpty())),400,"リーダーに選定を依頼するときは面談者を指定しないでください。");
+        } else if(multiplePayload) memberIds.addAll(studentIds(body.get("studentIds")));
+        else memberIds.add(text(body,"studentId"));
         Map<String,String> students=new LinkedHashMap<>();
         for(String memberId:memberIds) {
             require(!students.containsKey(memberId),400,"同じ面談者を重複して選択しないでください。");
@@ -246,7 +458,7 @@ public final class DealHunterServer {
         JsonNode files=body.get("attachments");
         require(files==null || files.isNull() || (files.isArray() && files.isEmpty()),400,"スキルシートは案件共通のファイルを1つ選択してください。");
         Attachment attachment=body.hasNonNull("attachment")?parseAttachment(body.get("attachment")):null;
-        String leaderId=multiplePayload?text(body,"leaderId"):optionalText(body,"leaderId");
+        String leaderId=leaderAssignment || multiplePayload?text(body,"leaderId"):optionalText(body,"leaderId");
         Map<String,Object> leader=null;
         if(!leaderId.isEmpty()) {
             leader=one(c,"SELECT display_name FROM app_users WHERE id=? AND role='leader'",leaderId);
@@ -262,21 +474,18 @@ public final class DealHunterServer {
         require(!availability || candidates == null || (candidates.isArray() && candidates.isEmpty()),400,"参加可能な日時を確認する依頼には固定の候補日時を指定できません。");
         List<Slot> slots = availability ? List.of() : slots(candidates,false);
         String projectId=id("DH-");
-        execute(c,"INSERT INTO projects(id,name,sales_id,notes,leader_id,participant_name,participant_name_kana) VALUES(?,?,?,?,?,?,?)",projectId,project,user.id,summary,leaderId.isEmpty()?null:leaderId,participantName,participantNameKana);
+        execute(c,"INSERT INTO projects(id,name,sales_id,notes,leader_id,participant_name,participant_name_kana,upper_company,end_company) VALUES(?,?,?,?,?,?,?,?,?)",projectId,project,user.id,summary,leaderId.isEmpty()?null:leaderId,participantName,participantNameKana,upperCompany,endCompany);
         if(attachment!=null) execute(c,"INSERT INTO project_attachments(project_id,filename,content) VALUES(?,?,?)",projectId,attachment.name(),attachment.content());
-        String times = availability
-            ? (requestedDates.isEmpty() ? "日時の指定なし。参加可能な開始日時を回答してください。" : String.join(" ／ ",requestedDates.stream().map(LocalDate::toString).toList()) + " の参加可能な開始日時を回答してください。")
-            : String.join(" ／ ",slots.stream().map(DealHunterServer::slotLabel).toList());
-        String datesArray = "{" + String.join(",",requestedDates.stream().map(LocalDate::toString).toList()) + "}";
-        List<String> requestIds=new ArrayList<>();
-        List<Map<String,Object>> previews=new ArrayList<>();
-        for(var member:students.entrySet()) {
-            String requestId=id("R-");
-            execute(c,"INSERT INTO interview_requests(id,project_id,student_id,status,schedule_mode,requested_dates) VALUES(?,?,?,'requested',?,?::date[])",requestId,projectId,member.getKey(),scheduleMode,datesArray);
-            for(Slot slot:slots) execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at) VALUES(?,?,?,?)",id("S-"),requestId,slot.start,slot.end);
-            requestIds.add(requestId);
-            previews.add(preview(c,projectId,member.getKey(),"lark","面談依頼の通知内容",List.of(line("宛先","面談連絡グループ"),line("メンション","@"+member.getValue()),line("案件",project),line("概要",summary),line(availability?"日程の確認":"候補日時",times),line("面談ページ","http://127.0.0.1:3100/engineer?request="+requestId)),"面談依頼が来ました。概要を確認し、営業へ参加可能な日時を回答してください。外部送信は行っていません。"));
+        if(leaderAssignment) {
+            String recruitmentId=id("A-");
+            execute(c,"INSERT INTO recruitments(id,project_id,schedule_mode,requested_dates) VALUES(?,?,?,?::date[])",recruitmentId,projectId,scheduleMode,datesArray(requestedDates));
+            for(Slot slot:slots) execute(c,"INSERT INTO recruitment_candidate_slots(id,recruitment_id,start_at,end_at) VALUES(?,?,?,?)",id("T-"),recruitmentId,slot.start,slot.end);
+            var p=preview(c,projectId,leaderId,"lark","面談者の選定依頼",List.of(line("メンション","@"+str(leader,"display_name")),line("案件",project),line("概要",summary),line("面談者","未定・担当リーダーが選定"),line(availability?"日程の確認":"候補日時",scheduleLabel(scheduleMode,requestedDates,slots)),line("選定ページ","http://127.0.0.1:3100/leader?project="+projectId)),"部下から面談者を1名以上選択してください。選定後、各面談者が自分の予定を回答します。外部送信は行っていません。");
+            return Map.of("message","担当リーダーへの面談者の選定依頼を保存しました。","projectId",projectId,"recruitmentId",recruitmentId,"requestIds",List.of(),"preview",p,"previews",List.of(p),"leaderPreview",p);
         }
+        IssuedRequests issued=issueRequests(c,projectId,project,summary,scheduleMode,requestedDates,slots,students,null);
+        List<String> requestIds=issued.ids();
+        List<Map<String,Object>> previews=issued.previews();
         Map<String,Object> response=new LinkedHashMap<>();
         response.put("message",students.size()+"名への面談依頼を保存しました。");
         response.put("projectId",projectId);
@@ -289,6 +498,33 @@ public final class DealHunterServer {
             line("閲覧ページ","http://127.0.0.1:3100/leader?project="+projectId)),
             "body","閲覧専用です。面談依頼・回答・日時の調整は営業と各面談者の間で直接行います。"));
         return response;
+    }
+    private static Object assignRecruitment(Connection c, User user, String recruitmentId, JsonNode body) throws Exception {
+        role(user,"leader");
+        Map<String,Object> recruitment=one(c,"SELECT a.*,p.leader_id,p.sales_id,p.name AS project_name,p.notes,su.display_name AS sales_name FROM recruitments a JOIN projects p ON p.id=a.project_id JOIN app_users su ON su.id=p.sales_id WHERE a.id=? FOR UPDATE OF a",recruitmentId);
+        require(recruitment!=null,404,"面談者の選定依頼が見つかりません。");
+        require(user.id.equals(str(recruitment,"leader_id")),403,"この案件の面談者は選定できません。");
+        require(str(recruitment,"status").equals("pending"),409,"この依頼の面談者はすでに選定されています。");
+        require(body.size()==1 && body.has("studentIds"),400,"選定する面談者だけを指定してください。");
+        List<String> selected=studentIds(body.get("studentIds"));
+        Map<String,String> students=new LinkedHashMap<>();
+        // Use a stable order when protecting team membership and registered roles.
+        for(String memberId:selected.stream().sorted().toList()) {
+            Map<String,Object> member=one(c,"SELECT u.display_name FROM leader_members m JOIN app_users u ON u.id=m.student_id WHERE m.leader_id=? AND m.student_id=? AND m.active AND u.role='student' FOR SHARE OF m,u",user.id,memberId);
+            require(member!=null,400,"自分の部下として登録されている面談者を選択してください。");
+            students.put(memberId,str(member,"display_name"));
+        }
+        List<Slot> templates=new ArrayList<>();
+        try(PreparedStatement statement=prepared(c,"SELECT start_at,end_at FROM recruitment_candidate_slots WHERE recruitment_id=? ORDER BY start_at,id",recruitmentId);
+                ResultSet rows=statement.executeQuery()) {
+            while(rows.next()) templates.add(new Slot(rows.getTimestamp("start_at").toLocalDateTime(),rows.getTimestamp("end_at")==null?null:rows.getTimestamp("end_at").toLocalDateTime()));
+        }
+        List<LocalDate> requestedDates=storedRequestedDates(recruitment).stream().sorted().toList();
+        String projectId=str(recruitment,"project_id");
+        IssuedRequests issued=issueRequests(c,projectId,str(recruitment,"project_name"),str(recruitment,"notes"),str(recruitment,"schedule_mode"),requestedDates,templates,students,recruitmentId);
+        execute(c,"UPDATE recruitments SET status='assigned',assigned_at=now() WHERE id=?",recruitmentId);
+        var salesPreview=preview(c,projectId,str(recruitment,"sales_id"),"lark","面談者の選定が完了",List.of(line("メンション","@"+str(recruitment,"sales_name")),line("案件",str(recruitment,"project_name")),line("担当リーダー",user.name),line("面談者",String.join("、",students.values())),line("面談ページ","http://127.0.0.1:3100/sales?request="+issued.ids().getFirst())),"担当リーダーが面談者を選定しました。各面談者の参加可能な日時への回答を待ってください。外部送信は行っていません。");
+        return Map.of("message",students.size()+"名を面談者に選定し、各人への依頼を保存しました。","projectId",projectId,"recruitmentId",recruitmentId,"requestId",issued.ids().getFirst(),"requestIds",issued.ids(),"preview",issued.previews().getFirst(),"previews",issued.previews(),"salesPreview",salesPreview);
     }
     private static Object respondRequest(Connection c, User user, String requestId, JsonNode body) throws Exception {
         Map<String,Object> r = request(c,user,requestId,"student");
@@ -317,7 +553,7 @@ public final class DealHunterServer {
             answer = ids.size()+"件";
         }
         execute(c,"UPDATE interview_requests SET status='responded',task_revision=task_revision+1 WHERE id=?",requestId);
-        var p=preview(c,str(r,"project_id"),str(r,"sales_id"),"lark","候補日時への回答",List.of(line("メンション","@青木 美咲"),line("受講者",user.name),line("案件",str(r,"project_name")),line("参加可能な候補",answer),line("面談ページ","http://127.0.0.1:3100/sales?request="+requestId)),"受講者から回答が届きました。先方と調整し、面談日時を確定してください。外部送信は行っていません。");
+        var p=preview(c,str(r,"project_id"),str(r,"sales_id"),"lark","候補日時への回答",List.of(line("メンション","@"+str(r,"sales_name")),line("受講者",user.name),line("案件",str(r,"project_name")),line("参加可能な候補",answer),line("面談ページ","http://127.0.0.1:3100/sales?request="+requestId)),"受講者から回答が届きました。先方と調整し、面談日時を確定してください。外部送信は行っていません。");
         return Map.of("message","参加可能な候補を保存しました。","preview",p);
     }
     private static Object confirmRequest(Connection c, User user, String requestId, JsonNode body) throws Exception {
@@ -390,11 +626,13 @@ public final class DealHunterServer {
         require(revisionNode!=null && revisionNode.isIntegralNumber() && revisionNode.canConvertToLong() && revisionNode.asLong()>0,
             400,"確認する対応内容の版が正しくありません。");
         long expectedRevision=revisionNode.asLong();
-        boolean requestTask=taskKey.startsWith("request-");
-        String prefix=requestTask?"request-":taskKey.startsWith("entry-")?"entry-":taskKey.startsWith("feedback-")?"feedback-":taskKey.startsWith("result-")?"result-":null;
+        boolean requestTask=taskKey.startsWith("request-"), assignmentTask=taskKey.startsWith("assignment-");
+        String prefix=assignmentTask?"assignment-":requestTask?"request-":taskKey.startsWith("entry-")?"entry-":taskKey.startsWith("feedback-")?"feedback-":taskKey.startsWith("result-")?"result-":null;
         require(prefix!=null,404,"対応待ちが見つかりません。");
         String sourceId=taskKey.substring(prefix.length());
-        Map<String,Object> source=one(c,requestTask
+        Map<String,Object> source=one(c,assignmentTask
+            ?"SELECT a.id,p.sales_id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE a.id=? FOR UPDATE OF a"
+            :requestTask
             ?"SELECT r.id,p.sales_id FROM interview_requests r JOIN projects p ON p.id=r.project_id WHERE r.id=? FOR UPDATE OF r"
             :"SELECT e.id,p.sales_id FROM scheduled_events e JOIN projects p ON p.id=e.project_id WHERE e.id=? FOR UPDATE OF e",sourceId);
         require(source!=null,404,"対応待ちが見つかりません。");
@@ -429,9 +667,39 @@ public final class DealHunterServer {
             try(Connection c=connect()) {
                 c.setAutoCommit(false);
                 try {
+                    if(path.equals("/api/auth/register") || path.equals("/api/auth/login")) {
+                        require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
+                        JsonNode body=readBody(exchange,16*1024);
+                        Object response=path.endsWith("/register")?registerUser(c,body):loginUser(c,body);
+                        c.commit(); respond(exchange,200,response); return;
+                    }
+                    if(path.matches("/api/auth/users/[A-Za-z0-9_-]+")) {
+                        require(method.equals("GET"),405,"このエンドポイントではGETを使用してください。");
+                        Object response=currentUser(c,path.split("/")[4]);
+                        c.commit(); respond(exchange,200,response); return;
+                    }
+                    boolean adminUpdate=path.matches("/api/admin/users/[A-Za-z0-9_-]+") && method.equals("POST");
+                    // Hold a shared lock for each user-scoped transaction. An
+                    // account edit waits for active operations and then blocks
+                    // stale-role operations until the change commits.
+                    execute(c,adminUpdate?"SELECT pg_advisory_xact_lock(709032)":"SELECT pg_advisory_xact_lock_shared(709032)");
                     User user=authenticate(c,exchange);
-                    require(!user.role.equals("leader") || !method.equals("POST"),403,"リーダーは担当案件の閲覧のみ利用できます。");
+                    if(path.equals("/api/admin/users") || path.matches("/api/admin/users/[A-Za-z0-9_-]+")) {
+                        role(user,"admin");
+                        Object response;
+                        if(path.equals("/api/admin/users")) {
+                            require(method.equals("GET"),405,"このエンドポイントではGETを使用してください。");
+                            response=listUsers(c,user);
+                        } else {
+                            require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
+                            response=updateUser(c,user,path.split("/")[4],readBody(exchange,16*1024));
+                        }
+                        c.commit(); respond(exchange,200,response); return;
+                    }
+                    boolean assignmentRoute=path.matches("/api/recruitments/[^/]+/assign");
+                    require(!user.role.equals("leader") || !method.equals("POST") || assignmentRoute,403,"リーダーが更新できるのは担当案件の面談者選定だけです。");
                     if(path.equals("/api/dashboard")) {
+                        require(!user.role.equals("admin"),403,"業務画面は営業・エンジニア・リーダーが利用できます。");
                         require(method.equals("GET"),405,"このエンドポイントではGETを使用してください。");
                         Map<String,Object> row=one(c,dashboardSql,user.id);
                         respond(exchange,200,JSON.readTree(row.values().iterator().next().toString())); return;
@@ -440,18 +708,13 @@ public final class DealHunterServer {
                         downloadAttachment(c,user,path.split("/")[3],exchange); c.commit(); return;
                     }
                     require(path.equals("/api/requests") || path.matches("/api/requests/[^/]+/(respond|confirm)")
-                        || path.matches("/api/requests/[^/]+/attachment") || path.matches("/api/events/[^/]+/(feedback|entry|acknowledge)") || path.matches("/api/tasks/[^/]+/acknowledge"),404,"エンドポイントが見つかりません。");
+                        || path.matches("/api/requests/[^/]+/attachment") || assignmentRoute || path.matches("/api/events/[^/]+/(feedback|entry|acknowledge)") || path.matches("/api/tasks/[^/]+/acknowledge"),404,"エンドポイントが見つかりません。");
                     require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
-                    require(Objects.toString(exchange.getRequestHeaders().getFirst("Content-Type"),"").toLowerCase(Locale.ROOT).startsWith("application/json"),400,"JSON形式で送信してください。");
-                    byte[] bytes=exchange.getRequestBody().readNBytes(8*1024*1024+1);
-                    require(bytes.length<=8*1024*1024,413,"送信データが大きすぎます。");
-                    JsonNode body;
-                    try { body=JSON.readTree(bytes); }
-                    catch(IOException exception) { throw new ApiError(400,"JSONの形式が正しくありません。"); }
-                    require(body!=null && body.isObject(),400,"入力データが正しくありません。");
+                    JsonNode body=readBody(exchange,8*1024*1024);
                     Object response;
                     String[] parts=path.split("/");
                     if(path.equals("/api/requests")) response=createRequest(c,user,body);
+                    else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("recruitments") && parts[4].equals("assign")) response=assignRecruitment(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("respond")) response=respondRequest(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("confirm")) response=confirmRequest(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("attachment")) response=saveAttachment(c,user,parts[3],body);
@@ -464,7 +727,10 @@ public final class DealHunterServer {
                     respond(exchange,200,response);
                 } catch(Exception exception) { c.rollback(); throw exception; }
             }
-        } catch(ApiError exception) { respond(exchange,exception.status,Map.of("error",exception.getMessage())); }
+        } catch(ApiError exception) {
+            if(exception.status==429) exchange.getResponseHeaders().set("Retry-After","300");
+            respond(exchange,exception.status,Map.of("error",exception.getMessage()));
+        }
         catch(SQLException exception) {
             System.err.println("Database request failed (SQL state " + exception.getSQLState() + ")");
             int status="23505".equals(exception.getSQLState())?409:503;
@@ -473,6 +739,16 @@ public final class DealHunterServer {
             System.err.println("Request failed: "+exception.getClass().getSimpleName());
             respond(exchange,500,Map.of("error","処理に失敗しました。入力内容を確認してください。"));
         }
+    }
+    private static JsonNode readBody(HttpExchange exchange, int limit) throws IOException {
+        require(Objects.toString(exchange.getRequestHeaders().getFirst("Content-Type"),"").toLowerCase(Locale.ROOT).startsWith("application/json"),400,"JSON形式で送信してください。");
+        byte[] bytes=exchange.getRequestBody().readNBytes(limit+1);
+        require(bytes.length<=limit,413,"送信データが大きすぎます。");
+        JsonNode body;
+        try { body=JSON.readTree(bytes); }
+        catch(IOException exception) { throw new ApiError(400,"JSONの形式が正しくありません。"); }
+        require(body!=null && body.isObject(),400,"入力データが正しくありません。");
+        return body;
     }
     private static void respond(HttpExchange exchange,int status,Object data) throws IOException {
         byte[] response=JSON.writeValueAsBytes(data);

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import Link from "next/link";
 import { DEMO_ENGINEERS, DEMO_LEADERS } from "../demo-accounts";
 
 type Props = {
@@ -68,7 +69,9 @@ export default function LoginForm({ action, error, nextPath }: Props) {
           <div className="dh-login-field"><label htmlFor="dh-login-password">パスワード</label><div className="dh-login-password"><input id="dh-login-password" name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} required aria-describedby={error ? "dh-login-error" : undefined} /><button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? "パスワードを隠す" : "パスワードを表示"} aria-pressed={showPassword}>{showPassword ? "隠す" : "表示"}</button></div></div>
           <SubmitButton />
         </form>
+        <p className="dh-login-register-link">初めて利用する方は <Link href="/register">新規アカウント登録</Link></p>
         <p className="dh-login-routing-note">登録された利用者区分に応じて、<br />営業・エンジニア・リーダーのホームが開きます。</p>
+        <p className="dh-login-admin-note">管理者も、この画面からログインできます。</p>
         <div className="dh-login-demo">
           <div className="dh-login-demo-heading"><span>デモで試す</span><small>アカウントを入力</small></div>
           <div className="dh-login-demo-accounts">{demoAccounts.map(account => {

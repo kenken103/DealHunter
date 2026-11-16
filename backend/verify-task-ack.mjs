@@ -234,7 +234,7 @@ if (process.argv.includes("--continue")) {
 
 if (process.argv.includes("--ui-fixture")) {
   const project = `画面確認・対応待ち確認済み ${Date.now().toString(36)}`;
-  const created = await request(sales, "/api/requests", { project, summary: "確認済みボタンと未読表示のブラウザ操作を確認する案件です。", studentId: student, candidates: [{ start: "2026-11-12T16:00", end: "2026-11-12T16:45" }] }, [200, 201]);
+  const created = await request(sales, "/api/requests", { project, upperCompany: "検証用上位会社", summary: "確認済みボタンと未読表示のブラウザ操作を確認する案件です。", studentId: student, candidates: [{ start: "2026-11-12T16:00", end: "2026-11-12T16:45" }] }, [200, 201]);
   const savedRequest = (await dashboard(sales)).requests.find(item => item.id === created.requestId);
   assert(savedRequest);
   await request(student, `/api/requests/${created.requestId}/respond`, { slotIds: [savedRequest.candidates[0].id] });
@@ -253,7 +253,7 @@ const suffix = randomUUID();
 const state = { phase: "starting", project: `統合確認・対応待ち確認済み ${suffix}`, otherSalesId: `test-sales-taskack-${suffix}`, otherSalesName: `確認済みAPI検証専用営業 ${suffix}` };
 sql("INSERT INTO app_users(id,display_name,role) VALUES(:'fixture_user',convert_from(decode(:'fixture_user_name_hex','hex'),'UTF8'),'sales');", { fixture_user: state.otherSalesId, fixture_user_name_hex: hex(state.otherSalesName) });
 await save(state);
-const created = await request(sales, "/api/requests", { project: state.project, summary: "確認済み・未読再発生・面談結果タスクの統合検証です。", studentId: student, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T14:00" }] }, [200, 201]);
+const created = await request(sales, "/api/requests", { project: state.project, upperCompany: "検証用上位会社", summary: "確認済み・未読再発生・面談結果タスクの統合検証です。", studentId: student, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T14:00" }] }, [200, 201]);
 let data = await dashboard(sales);
 const savedRequest = data.requests.find(item => item.id === created.requestId);
 assert(savedRequest);

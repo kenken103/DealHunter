@@ -64,7 +64,7 @@ function checkEventsPreserved(before, after, changedId) {
 
 async function createCase(state, label) {
   const project = `${state.prefix} ${label} ${state.suffix}`;
-  const created = await request(sales, "/api/requests", { project, summary: `受講者の確認済みを案件ごとに独立して保存する検証 ${label}。`, studentId: student, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T13:45" }] }, [200, 201]);
+  const created = await request(sales, "/api/requests", { project, upperCompany: "検証用上位会社", summary: `受講者の確認済みを案件ごとに独立して保存する検証 ${label}。`, studentId: student, candidates: [{ start: "2026-11-12T13:00", end: "2026-11-12T13:45" }] }, [200, 201]);
   const saved = (await dashboard(sales)).requests.find(item => item.id === created.requestId);
   assert(saved);
   const fixture = { name: project, project, projectId: saved.projectId, requestId: created.requestId, slotId: saved.candidates[0].id };

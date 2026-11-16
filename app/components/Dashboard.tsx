@@ -11,7 +11,6 @@ type Filter = "all" | "meet" | "entry";
 const DAY = 86400000;
 const TODAY = Date.UTC(2026, 10, 5);
 const DAYS = ["日", "月", "火", "水", "木", "金", "土"];
-const OWNER = "青木 美咲";
 const pad = (n: number) => String(n).padStart(2, "0");
 const dateText = (stamp: number) => {
   const d = new Date(stamp);
@@ -72,6 +71,7 @@ function FileHead({ reference, title, status, art = false }: { reference: string
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const OWNER = data?.currentUser.name || "読み込み中…";
   const [error, setError] = useState("");
   const [acknowledgeError, setAcknowledgeError] = useState("");
   const [view, setView] = useState<View>("schedule");
@@ -96,6 +96,7 @@ export default function Dashboard() {
       const response = await fetch("/api/dashboard", { cache: "no-store" });
       if (!active.current || sequence !== refreshSequence.current) return;
       if (response.status === 401) { window.location.assign("/login"); return; }
+      if (response.status === 403) { window.location.assign("/"); return; }
       if (!response.ok) throw new Error("予定を取得できませんでした。Java APIとPostgreSQLの起動を確認してください。");
       const updated = await response.json() as DashboardData;
       if (!active.current || sequence !== refreshSequence.current) return;
@@ -153,11 +154,13 @@ export default function Dashboard() {
   const tasks = data?.tasks ?? [];
   const unreadTasks = tasks.filter(item => item.unread).length;
   const requests = data?.requests ?? [];
+  const pendingRecruitments = data?.recruitments?.filter(item => item.status === "pending") ?? [];
   const nextMeet = events.find(e => e.stamp >= TODAY && e.type === "meet");
   const nextEntry = events.find(e => e.stamp >= TODAY && e.type === "entry");
   const list = events.filter(e => e.stamp >= start && e.stamp < start + 7 * DAY && (filter === "all" || e.type === filter));
   const event = list.find(e => e.key === selected) ?? list[0];
   const task = tasks.find(t => t.key === selectedTask);
+  const taskProject = data?.projects?.find(item => item.id === task?.projectId);
   const question = questions.find(q => q.key === selectedQuestion) ?? questions[0];
   const title = { schedule: "面談・入場予定", tasks: "対応待ち", knowledge: "質問集" }[view];
 
@@ -166,8 +169,8 @@ export default function Dashboard() {
   }
 
   function openWorkflow(target: PreviewDialogKey) {
-    const action = target.kind === "confirm" ? "schedule" : target.kind === "entry" ? "entry" : target.kind === "feedback" ? "feedback" : undefined;
-    const matching = action ? tasks.find(item => item.action === action && (target.eventId ? item.eventId === target.eventId : target.requestId ? item.requestId === target.requestId : false)) : undefined;
+    const action = target.kind === "confirm" ? "schedule" : target.kind === "entry" ? "entry" : target.kind === "feedback" ? "feedback" : target.kind === "recruitment" ? "assign" : undefined;
+    const matching = action ? tasks.find(item => item.action === action && (target.eventId ? item.eventId === target.eventId : target.requestId ? item.requestId === target.requestId : target.recruitmentId ? item.recruitmentId === target.recruitmentId : false)) : undefined;
     if (matching) void acknowledgeTask(matching);
     setDialog(target);
   }
@@ -237,6 +240,8 @@ export default function Dashboard() {
       <section className="file-section">
         <h3>{event.entry ? "初回入場の予定" : "面談の予定"}</h3>
         <Facts rows={[
+          ["上位会社", event.upperCompany || "未登録"],
+          ["エンド企業", event.endCompany || "未入力"],
           [event.entry ? "集合時刻" : "開始日時", <>{dateText(event.stamp)}<br /><span className="fact-time">{event.time}{event.entry ? " 集合" : ""}</span></>],
           ["面談者", event.person],
           ["参画者", event.participantName || "未登録"],
@@ -275,7 +280,7 @@ export default function Dashboard() {
       <nav className="topnav" aria-label="メインメニュー">
         {([ ["schedule", "calendar", "予定表"], ["tasks", "inbox", "対応待ち"], ["knowledge", "book", "質問集"] ] as const).map(([key, icon, label]) => <button type="button" key={key} className={`${view === key ? "active" : ""}${key === "tasks" ? " sales-task-nav" : ""}`} aria-current={view === key ? "page" : undefined} aria-label={key === "tasks" ? `対応待ち ${tasks.length}件／未確認 ${unreadTasks}件` : undefined} onClick={() => setView(key)}><Icon name={icon} />{key === "tasks" ? <TaskCounts pending={tasks.length} unread={unreadTasks} /> : label}</button>)}
       </nav>
-      <div className="account"><span className="division">営業部</span><span className="user-glyph" aria-hidden="true">青</span><span className="user-name">{OWNER}</span><form action={logout}><button type="submit" className="logout-btn">ログアウト</button></form></div>
+      <div className="account"><span className="division">営業部</span><span className="user-glyph" aria-hidden="true">{OWNER.slice(0, 1)}</span><span className="user-name">{OWNER}</span><form action={logout}><button type="submit" className="logout-btn">ログアウト</button></form></div>
     </div></header>
     <main>
       <div className="page-head"><div className="context"><span className="context-mark" />営業デスク<span className="sep">/</span>自分の担当案件</div>
@@ -313,7 +318,11 @@ export default function Dashboard() {
                 {tasks.length ? tasks.map(t => <button type="button" key={t.key} className={`agenda-row auxiliary-row${task?.key === t.key ? " selected" : ""}${t.unread ? " sales-task-unread" : ""}`} aria-pressed={task?.key === t.key} onClick={() => selectTask(t)}>
                   <span className="row-time"><span className={`kind mark-${t.owner === "営業" ? "entry" : "meet"}`}>{t.owner}の対応</span></span><strong className="row-title">{t.title}<TaskReadBadge task={t} /></strong><span className="row-person">{t.project} · {t.person}</span><span className="row-arrow"><Icon name="chevright" /></span>
                 </button>) : <div className="empty-state"><strong>対応待ちはありません</strong><p>受講者の回答や提出があると、ここに表示されます。</p></div>}
-                <div className="sales-request-list"><div className="view-list-head"><strong>作成した面談依頼</strong><span>{requests.length}件</span></div>{requests.length ? requests.map(item => <button className="sales-request-row" type="button" key={item.id} onClick={() => openWorkflow({ kind: item.status === "responded" ? "confirm" : "request", requestId: item.id })}><strong>{item.project}</strong><span>{item.person} · リーダー：{item.leaderName || "未設定"} · <span className="sales-status">{{ requested: "受講者の回答待ち", responded: "回答済み・日時確定待ち", confirmed: "日時確定済み" }[item.status]}</span></span></button>) : <div className="empty-state"><p>面談依頼を作成すると表示されます。</p></div>}</div>
+                <div className="sales-request-list"><div className="view-list-head"><strong>作成した面談依頼</strong><span>{requests.length + pendingRecruitments.length}件</span></div>
+                  {pendingRecruitments.map(item => <button className="sales-request-row sales-recruitment-row" type="button" key={`recruitment-${item.id}`} onClick={() => openWorkflow({ kind: "recruitment", recruitmentId: item.id })}><strong>{item.project}</strong><span>面談者はリーダーが選定 · リーダー：{item.leaderName} · <span className="sales-status">面談者の選定待ち</span></span></button>)}
+                  {requests.map(item => <button className="sales-request-row" type="button" key={item.id} onClick={() => openWorkflow({ kind: item.status === "responded" ? "confirm" : "request", requestId: item.id })}><strong>{item.project}</strong><span>{item.person} · リーダー：{item.leaderName || "未設定"} · <span className="sales-status">{{ requested: "受講者の回答待ち", responded: "回答済み・日時確定待ち", confirmed: "日時確定済み" }[item.status]}</span></span></button>)}
+                  {!requests.length && !pendingRecruitments.length && <div className="empty-state"><p>面談依頼を作成すると表示されます。</p></div>}
+                </div>
               </>}
               {view === "knowledge" && <><div className="view-list-head"><strong>面談で聞かれた質問</strong><span>{questions.length}件</span></div>{questions.length ? questions.map(q => <button type="button" key={q.key} className={`agenda-row auxiliary-row${question?.key === q.key ? " selected" : ""}`} aria-pressed={question?.key === q.key} onClick={() => { setSelectedQuestion(q.key); focusDetail(); }}><span className="row-time"><span className="kind mark-meet">{q.tag}</span></span><strong className="row-title">{q.title}</strong><span className="row-person">{events.find(e => e.projectId === q.project)?.project ?? requests.find(r => r.projectId === q.project)?.project}</span><span className="row-arrow"><Icon name="chevright" /></span></button>) : <div className="empty-state"><p>面談後に提出された質問が表示されます。</p></div>}</>}
             </div>
@@ -322,7 +331,7 @@ export default function Dashboard() {
             {view === "schedule" && eventDetails()}
             {view === "tasks" && (task ? <>
               <FileHead reference={`対応待ち　/　${task.owner}`} title={task.project} status={task.title} />
-              <section className="file-section"><h3>対応内容<TaskReadBadge task={task} /></h3><Facts rows={[["面談者", task.person], ["参画者", data?.projects?.find(item => item.id === task.projectId)?.participantName || "未登録"], ["参画者(ひらがな)", data?.projects?.find(item => item.id === task.projectId)?.participantNameKana || "未登録"], ["リーダー", data?.projects?.find(item => item.id === task.projectId)?.leaderName || "未設定"], ["次の担当", task.owner], ["担当営業", OWNER]]} /><p className="body-copy">{task.body}</p><p className="sales-task-read-note">確認済みは内容を閲覧した状態です。対応が完了すると、この一覧から外れます。</p><button type="button" className="detail-action" onClick={() => openWorkflow({ kind: task.action === "schedule" ? "confirm" : task.action === "entry" ? "entry" : "feedback", requestId: task.requestId ?? undefined, eventId: task.eventId ?? undefined })}>{task.action === "feedback" ? "提出状況を見る" : task.action === "schedule" ? "面談日時を確定" : "面談結果・初回入場を登録"}<Icon name="chevright" /></button></section>{back}
+              <section className="file-section"><h3>対応内容<TaskReadBadge task={task} /></h3><Facts rows={[["上位会社", taskProject?.upperCompany || "未登録"], ["エンド企業", taskProject?.endCompany || "未入力"], ["面談者", task.action === "assign" ? "面談者はリーダーが選定" : task.person], ["参画者", taskProject?.participantName || "未登録"], ["参画者(ひらがな)", taskProject?.participantNameKana || "未登録"], ["リーダー", taskProject?.leaderName || "未設定"], ["次の担当", task.owner], ["担当営業", OWNER]]} /><p className="body-copy">{task.body}</p><p className="sales-task-read-note">確認済みは内容を閲覧した状態です。対応が完了すると、この一覧から外れます。</p><button type="button" className="detail-action" onClick={() => openWorkflow({ kind: task.action === "assign" ? "recruitment" : task.action === "schedule" ? "confirm" : task.action === "entry" ? "entry" : "feedback", recruitmentId: task.recruitmentId ?? undefined, requestId: task.requestId ?? undefined, eventId: task.eventId ?? undefined })}>{task.action === "assign" ? "選定状況を見る" : task.action === "feedback" ? "提出状況を見る" : task.action === "schedule" ? "面談日時を確定" : "面談結果・初回入場を登録"}<Icon name="chevright" /></button></section>{back}
             </> : <><FileHead reference="対応待ち" title={tasks.length ? "対応する項目を選択" : "対応待ちはありません"} /><div className="empty-state"><p>{tasks.length ? "一覧の項目を開くと、対応内容を確認できます。" : "作成した面談依頼から、受講者の回答状況を確認できます。"}</p></div>{back}</>)}
             {view === "knowledge" && question && <><FileHead reference={`質問集　/　${question.key}`} title={question.title} /><section className="file-section"><h3>質問の記録</h3><Facts rows={[["案件", events.find(e => e.projectId === question.project)?.project ?? requests.find(r => r.projectId === question.project)?.project], ["分類", question.tag]]} /><p className="body-copy">{question.context}</p>{events.some(e => e.projectId === question.project) && <button type="button" className="detail-action" onClick={() => { const target = events.find(e => e.key === question.eventId && e.projectId === question.project) ?? events.find(e => e.projectId === question.project); if (target) showEvent(target); }}>この案件の予定を見る<Icon name="chevright" /></button>}</section>{back}</>}
           </aside>

@@ -12,5 +12,5 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   const { error, next } = await searchParams;
   const user = await getDemoUser();
   if (user) redirect(safeHomeTarget(user.role, next));
-  return <LoginForm action={login} nextPath={typeof next === "string" ? next : undefined} error={error ? "メールアドレスまたはパスワードが正しくありません。" : undefined} />;
+  return <LoginForm action={login} nextPath={typeof next === "string" ? next : undefined} error={error === "limited" ? "ログインの試行が多すぎます。5分ほど待ってから、もう一度お試しください。" : error === "unavailable" ? "アカウント情報に接続できませんでした。システムの起動を確認して、もう一度お試しください。" : error ? "メールアドレスまたはパスワードが正しくありません。" : undefined} />;
 }

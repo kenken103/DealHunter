@@ -13,3 +13,16 @@ INSERT INTO app_users(id, display_name, role) VALUES
 ('leader-sato', '佐藤 健一', 'leader'),
 ('leader-suzuki', '鈴木 遥', 'leader')
 ON CONFLICT (id) DO NOTHING;
+
+-- Apply the approved demo teams once; later membership changes remain intact.
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE version='demo-leader-teams-v1') THEN
+  INSERT INTO leader_members(leader_id,student_id) VALUES
+  ('leader-sato','student-takahashi'),('leader-sato','student-yamamoto'),
+  ('leader-sato','student-mori'),('leader-sato','student-ito'),('leader-sato','student-kobayashi'),
+  ('leader-suzuki','student-sasaki'),('leader-suzuki','student-tanaka'),
+  ('leader-suzuki','student-kimura'),('leader-suzuki','student-inoue')
+  ON CONFLICT(student_id) DO NOTHING;
+  INSERT INTO app_migrations(version) VALUES('demo-leader-teams-v1');
+ END IF;
+END $$;
