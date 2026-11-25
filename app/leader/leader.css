@@ -134,9 +134,12 @@ main.dh-leader-main{max-width:1510px;padding-bottom:40px;background:#f4f6f9}
   .dh-leader-account{grid-row:1;grid-column:2;gap:9px;font-size:11px}
   .dh-leader-account .logout-btn{font-size:10px;padding:4px 6px}
   .dh-leader-board{grid-template-columns:minmax(0,1fr);gap:18px}
+  .dh-leader-board:not(.is-detail)>.dh-leader-detail{display:none}
+  .dh-leader-board.is-detail>.dh-leader-list-panel{display:none}
   .dh-leader-list-panel,.dh-leader-detail{min-height:0}
   .dh-leader-back{display:inline-flex;align-items:center;gap:7px;min-height:44px;padding:8px 0;margin:10px 22px 18px;font-size:14px;color:#31599f}
   .dh-leader-back>.icon{width:14px;height:14px}
+  .dh-leader-back.is-top{margin-bottom:0}
   .dh-leader-title-row h1{font-size:28px}
   .dh-leader-filters{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
 }

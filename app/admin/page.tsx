@@ -4,7 +4,7 @@ import AdminDashboard from "../components/AdminDashboard";
 import { getDemoUser, homeFor } from "../lib/demo-auth";
 import "./admin.css";
 
-export const metadata: Metadata = { title: "アカウント管理｜DealHunter" };
+export const metadata: Metadata = { title: "管理画面｜DealHunter" };
 
 export default async function AdminPage() {
   const user = await getDemoUser();

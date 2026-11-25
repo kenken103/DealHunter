@@ -1,0 +1,264 @@
+.case-portfolio {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.case-portfolio-tools, .case-portfolio-filters, .case-portfolio-detail {
+  min-width: 0;
+  background: #fff;
+  border: 1px solid #c9d4e4;
+  border-radius: 8px;
+}
+.case-portfolio-history .company-history-search:last-child {
+  margin: 0;
+  border-bottom: 0;
+}
+.case-portfolio-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 16px;
+  padding: 16px 20px;
+}
+.case-portfolio-toolbar label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: #405675;
+  font-weight: 600;
+}
+.case-portfolio-toolbar label:first-child { flex: 1 1 180px; }
+.case-portfolio-toolbar input, .case-portfolio-toolbar select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid #b7c6db;
+  border-radius: 4px;
+  font: inherit;
+  color: #243d61;
+  background: #fff;
+}
+.case-portfolio-quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 10px 20px;
+  border-top: 1px solid #e1e7f0;
+}
+.case-portfolio-quick-filters > span { color: #475d7b; font-size: 12px; }
+.case-portfolio-checkboxes { display: flex; flex-wrap: wrap; gap: 8px; }
+.case-portfolio-checkboxes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid #bac8db;
+  border-radius: 6px;
+  color: #243d61;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.case-portfolio-checkboxes label:hover { background: #f3f7ff; }
+.case-portfolio-checkboxes label:has(input:checked) { background: #eaf1ff; border-color: #315ba5; }
+.case-portfolio-checkboxes input {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  margin: 0;
+  accent-color: #315ba5;
+  cursor: inherit;
+}
+
+.case-portfolio-columns {
+  display: grid;
+  grid-template-columns: minmax(290px, 1fr) minmax(0, 1.45fr);
+  align-items: start;
+  gap: 20px;
+}
+.case-portfolio-columns.is-list-only { grid-template-columns: minmax(0, 1fr); }
+.case-portfolio-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.case-portfolio-list > button, .case-pending-recruitments .sales-request-row {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #bccbe0;
+  border-radius: 7px;
+  background: #fff;
+  line-height: 1.7;
+  text-align: left;
+}
+.case-portfolio-list > button:hover, .case-pending-recruitments .sales-request-row:hover {
+  background: #f3f7ff;
+  border-color: #6985b3;
+}
+.case-portfolio-list > button.is-selected {
+  border-color: #315ba5;
+  box-shadow: inset 3px 0 #315ba5;
+  background: #eaf1ff;
+}
+.case-portfolio-list > button > strong, .case-pending-recruitments .sales-request-row > strong {
+  color: #223d68;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.case-portfolio-list > button > span, .case-pending-recruitments .sales-request-row > span {
+  color: #4a617e;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.case-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.case-card-top .icon { flex: none; width: 16px; height: 16px; color: #4b6591; }
+.case-card-top .case-stage, .case-detail-heading .case-stage {
+  display: inline-block;
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #e7eefc;
+  color: #244782;
+}
+.case-card-top .case-stage.is-active, .case-detail-heading .case-stage.is-active {
+  background: #e1f2e7;
+  color: #265c41;
+}
+.case-card-top .case-stage.is-closed, .case-detail-heading .case-stage.is-closed {
+  background: #edf0f4;
+  color: #414e61;
+}
+.case-card-top .case-stage.is-unknown, .case-detail-heading .case-stage.is-unknown {
+  background: #fff0d3;
+  color: #704b13;
+}
+.case-portfolio-detail { padding: 24px; scroll-margin-top: 18px; }
+.case-detail-heading {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #c9d4e4;
+}
+.case-detail-heading > p { font-size: 12px; font-weight: 650; color: #405675; }
+.case-reference { margin-inline-start: 8px; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
+.case-portfolio-detail h2 { font-size: 20px; line-height: 1.6; color: #21395f; overflow-wrap: anywhere; }
+.case-portfolio-detail section { margin-top: 22px; border-top: 1px solid #c9d4e4; padding-top: 18px; }
+.case-portfolio-detail h3 { font-size: 14px; color: #2c456e; margin-bottom: 12px; }
+.case-stage{font-size:11px;line-height:1.7;color:#315ba5;font-weight:650;overflow-wrap:anywhere}
+.case-facts{display:grid;gap:0;margin:12px 0;font-size:12px;line-height:1.85}
+.case-facts>div{display:grid;grid-template-columns:105px minmax(0,1fr);gap:8px;padding:7px 0;border-bottom:1px solid #edf0f6}
+.case-facts dt{font-size:11px;color:#718098}
+.case-facts dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#31496d}
+.case-body{font-size:12px;line-height:1.9;color:#405675;white-space:pre-wrap;overflow-wrap:anywhere}
+.case-muted{font-size:12px;line-height:1.8;color:#718098}
+.case-workflow-actions{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}
+.case-workflow-actions>button{line-height:1.7;white-space:normal}
+.case-history{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.case-history>li{border:1px solid #dce4f1;border-radius:4px;padding:12px;background:#f8faff;font-size:12px;line-height:1.8;min-width:0}
+.case-history-heading{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;color:#2b4c80}
+.case-history-heading>span{font-size:11px}
+.case-history>li>p{margin:6px 0;color:#576c8a}
+.case-history details{margin-top:8px;border-top:1px solid #dce4f1;padding-top:8px}
+.case-history summary{cursor:pointer;color:#315ba5;min-height:32px;line-height:32px}
+.case-history-questions{margin-top:12px;color:#405675;overflow-wrap:anywhere}
+.case-history-questions ul{padding-left:20px}
+.case-history-questions li{margin-top:6px}
+.case-portfolio button:focus-visible,.case-portfolio input:focus-visible,.case-portfolio select:focus-visible,.case-history summary:focus-visible{outline:2px solid #5680d4;outline-offset:2px}
+
+@media (max-width: 800px) {
+  .case-portfolio { gap: 12px; }
+  .case-portfolio-columns { grid-template-columns: minmax(0, 1fr); }
+  .case-portfolio-toolbar { gap: 10px; padding: 14px; }
+  .case-portfolio-toolbar label:first-child { flex-basis: 100%; }
+  .case-portfolio-toolbar label:nth-child(2) { flex: 1; }
+  .case-portfolio-toolbar input { width: 100%; }
+  .case-portfolio-quick-filters { padding-inline: 14px; }
+  .case-portfolio-detail { padding: 16px; }
+  .case-portfolio-detail h2 { font-size: 18px; }
+  .case-facts > div { grid-template-columns: 95px minmax(0, 1fr); }
+  .case-portfolio-list > button { padding: 12px 14px; }
+  .case-workflow-actions { display: grid; }
+  .case-workflow-actions > button { min-height: 44px; }
+}
+
+.case-mobile-back{display:none}
+.company-history { color: #243f66; font-size: 13px; margin: 10px 0; }
+.company-history-search { padding: 0 20px 12px; border-bottom: 1px solid #dce4ee; }
+.company-history summary, .case-notice-history summary { cursor: pointer; font-weight: 650; padding: 10px 0; }
+.company-history-filters { display: flex; flex-wrap: wrap; gap: 12px; }
+.company-history-filters label { display: grid; gap: 5px; flex: 1 1 190px; min-width: 0; color: #425574; }
+.company-history-filters select { max-width: 100%; min-height: 42px; width: 100%; border: 1px solid #b5c3d8; border-radius: 5px; padding: 6px; background: white; color: #243f66; font: inherit; }
+.company-history-rows, .case-notice-history ol { margin: 8px 0; padding: 0; list-style: none; }
+.company-history-rows li, .case-notice-history li { display: grid; justify-items: start; gap: 4px; padding: 10px 0; border-top: 1px solid #dce4ee; overflow-wrap: anywhere; }
+.company-history-rows small, .case-notice-history li span { color: #50647d; }
+.case-facts dd a { color: #16468d; text-decoration: underline; }
+@media(max-width:800px){.case-portfolio-columns:not(.is-detail) .case-portfolio-detail{display:none}.case-portfolio-columns.is-detail .case-portfolio-list{display:none}.case-mobile-back{display:inline-flex;align-items:center;min-height:44px;margin-bottom:12px}.case-portfolio-detail>.text-link:last-child{min-height:44px}}
+@media(max-width:650px){.topnav{flex-wrap:nowrap;gap:0;min-width:0;width:100%}.topnav>button{flex:1;min-width:0;min-height:44px;padding:0 4px;font-size:11px;gap:4px;white-space:nowrap}.topnav>button.sales-task-nav{flex:1.5;padding:0 4px;gap:3px}.topnav>button .icon{width:13px;height:13px;flex:none}.topnav .sales-task-counts{font-size:10px}}
+.case-pending-recruitments {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #c9d4e4;
+  border-radius: 8px;
+  background: #eaf0fa;
+}
+.case-pending-recruitments h2 { font-size: 14px; color: #354c71; }
+
+.case-card-companies {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-top: 1px solid #dce4ef;
+  padding-top: 6px;
+}
+.case-company-row {
+  display: grid;
+  grid-template-columns: 5.5em minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+.case-company-row > .case-company-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #435a77;
+  white-space: nowrap;
+}
+.case-company-row > .case-company-name {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #263f60;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.interviewer-ng-badge {
+  display: inline-block;
+  max-width: 100%;
+  margin-inline-start: .45em;
+  padding: .05em .45em;
+  border: 1px solid #c58a7c;
+  border-radius: 4px;
+  background: #fff1eb;
+  color: #863b2a;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.case-company-row > .interviewer-ng-badge { grid-column: 2; justify-self: start; margin-inline-start: 0; }

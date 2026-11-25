@@ -1,0 +1,63 @@
+.question-library {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.question-library-message, .question-project-group {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+}
+.question-library-message { padding: 16px 20px; color: var(--ui-muted); }
+.question-project-group > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px 16px;
+  padding: 13px 20px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.question-project-group > summary::-webkit-details-marker { display: none; }
+.question-project-group > summary:hover, .question-project-group[open] > summary { background: var(--ui-selected); }
+.question-project-group > summary > :not(.icon) { grid-column: 1; }
+.question-project-group > summary > .icon { grid-column: 2; grid-row: 1 / span 3; color: var(--blue); }
+.question-project-group[open] > summary > .icon { transform: rotate(90deg); }
+.question-project-group > summary > strong { color: var(--navy); font-size: 16px; }
+.question-group-company, .question-group-counts { color: var(--ui-muted); font-size: 13px; }
+.question-interviews {
+  display: grid;
+  gap: 12px;
+  padding: 14px 20px 20px;
+  border-top: 1px solid var(--ui-border);
+}
+.question-interview {
+  min-width: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.question-interview-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 14px;
+  padding: 10px 14px;
+  background: #f7f9fc;
+}
+.question-interview-heading h2 { color: var(--navy); font-size: 14px; }
+.question-interview-heading p { color: var(--ui-muted); font-size: 12px; }
+.question-interview-heading button { min-height: 44px; }
+.question-interview ul { margin: 0; padding: 0 14px; list-style: none; }
+.question-interview li { padding: 10px 0; border-top: 1px solid var(--ui-border); font-size: 14px; }
+.question-interview li:first-child { border-top: 0; }
+.question-interview li small { margin-inline-start: 8px; color: var(--ui-muted); }
+.question-context { margin-top: 4px; color: var(--ui-muted); font-size: 13px; }
+.question-context summary { width: fit-content; padding: 3px 0; color: var(--blue); cursor: pointer; }
+.question-context p { white-space: pre-wrap; }
+
+@media (max-width: 650px) {
+  .question-project-group > summary, .question-interviews { padding-inline: 12px; }
+  .question-interview-heading, .question-interview ul { padding-inline: 10px; }
+}

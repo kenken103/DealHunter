@@ -5,11 +5,16 @@ import { useRouter } from "next/navigation";
 import { logout } from "../actions/auth";
 import type { DemoUser } from "../lib/demo-auth";
 import { sourceInterview } from "../lib/interview-history";
+import { EngineerAvailability, responseDraftKey, type EngineerResponseDrafts } from "./EngineerAvailability";
+import { SharedInterviewSlots } from "./SharedInterviewSlots";
+import { agendaItems, EngineerInterviewPlan, isWithdrawn, stateLabel, updatedAfterInterview, type AgendaItem, type AgendaPart } from "./EngineerInterviewPlan";
+import { CaseMetadata, InterviewHistory, interviewResultLabels } from "./CaseWorkflow";
+import { ImportedCaseRecord, importedCaseStage } from "./ImportedCaseRecord";
 import type { DashboardData, InterviewFeedback, InterviewRequest, MutationResult, NotificationPreview, ScheduleEvent } from "../types";
 
 type View = "schedule" | "requests" | "feedback" | "inProgress";
 type Kind = "all" | "meet" | "entry";
-type ReferenceOrigin = { view: "schedule" | "inProgress"; eventId: string };
+type ReferenceOrigin = { view: "schedule" | "inProgress" | "feedback"; eventId: string };
 type FeedbackValues = { duties: string; process: string; remote: string; impression: string; questions: string[] };
 const requestLabels = { requested: "回答待ち", responded: "回答済み・日程調整中", confirmed: "日時確定" };
 const dateLabel = (stamp: number) => new Intl.DateTimeFormat("ja-JP", { month: "long", day: "numeric", weekday: "short", timeZone: "UTC" }).format(new Date(stamp));
@@ -19,7 +24,7 @@ const dateTimeLabel = (value: string) => {
   return Number.isNaN(date.getTime()) ? value.replace("T", " ") : new Intl.DateTimeFormat("ja-JP", { month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" }).format(date);
 };
 const slotLabel = (start: string, end: string | null) => end ? `${dateTimeLabel(start)} 〜 ${Number.isNaN(jstDate(end).getTime()) ? end : new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Tokyo" }).format(jstDate(end))}` : dateTimeLabel(start);
-const requestedDateLabel = (value: string) => dateLabel(Date.parse(`${value}T00:00:00Z`));
+
 function previewValue(value: string) {
   const local = value.match(/^(?:http:\/\/(?:127\.0\.0\.1|localhost):3100)?(\/(?:engineer|sales)(?:\?[^\s]*)?)$/);
   return local ? <a href={local[1]}>{value}</a> : value;
@@ -69,91 +74,17 @@ function PreviewModal({ preview, onClose }: { preview: NotificationPreview | nul
   </dialog>;
 }
 
-type ResponseProps = { request: InterviewRequest; pending: boolean; onSave: (path: string, payload: object) => Promise<boolean> };
-type AvailabilityDraft = { key: number; date: string; time: string };
-
-function AvailabilityResponse({ request, pending, onSave }: ResponseProps) {
-  const dates = request.requestedDates ?? [];
-  const [drafts, setDrafts] = useState<AvailabilityDraft[]>(() => {
-    const answers = request.candidates.filter(slot => request.availableSlotIds.includes(slot.id));
-    return answers.length ? answers.map((slot, key) => ({ key, date: slot.start.slice(0, 10), time: slot.start.slice(11, 16) })) : [{ key: 0, date: dates[0] ?? "", time: "" }];
-  });
-  const sequence = useRef(drafts.length);
-  const dateFields = useRef(new Map<number, HTMLInputElement | HTMLSelectElement>());
-  const [error, setError] = useState("");
-
-  function addDraft() {
-    const key = sequence.current++;
-    setDrafts(current => [...current, { key, date: dates[0] ?? "", time: "" }]);
-    requestAnimationFrame(() => dateFields.current.get(key)?.focus());
-  }
-  function removeDraft(key: number) {
-    const next = drafts.filter(draft => draft.key !== key);
-    setDrafts(next);
-    requestAnimationFrame(() => dateFields.current.get(next[0]?.key)?.focus());
-  }
-  function updateDraft(key: number, field: "date" | "time", value: string) {
-    setDrafts(current => current.map(draft => draft.key === key ? { ...draft, [field]: value } : draft));
-  }
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const proposals = drafts.map(draft => ({ start: `${String(form.get(`date-${draft.key}`) ?? "")}T${String(form.get(`time-${draft.key}`) ?? "")}` }));
-    if (!proposals.length || proposals.some(slot => !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(slot.start))) { setError("都合のよい日付と開始時刻を入力してください。"); return; }
-    if (new Set(proposals.map(slot => slot.start)).size !== proposals.length) { setError("同じ候補日時が重複しています。"); return; }
-    if (dates.length && proposals.some(slot => !dates.includes(slot.start.slice(0, 10)))) { setError("営業から指定された日付を選択してください。"); return; }
-    setError("");
-    await onSave(`/api/workflow/requests/${encodeURIComponent(request.id)}/respond`, { proposals });
-  }
-
-  return <form className="dh-engineer-response" onSubmit={submit}>
-    <fieldset disabled={pending} aria-describedby="availability-response-note">
-      <legend>都合のよい日時を回答</legend>
-      <p id="availability-response-note" className="dh-engineer-small">{dates.length ? `営業から指定された日付：${dates.map(requestedDateLabel).join("、")}。この中で参加できる開始時刻を入力してください。` : "営業から日付・時刻の指定はありません。参加できる日付と開始時刻を入力してください。"}複数の候補を送信できます。日時確定前は回答を変更できます。時刻は日本時間です。</p>
-      <div className="dh-engineer-proposals">{drafts.map((draft, index) => <div className="dh-engineer-proposal" key={draft.key}>
-        <p>候補 {index + 1}</p>
-        <div className="dh-engineer-proposal-fields">
-          <label>日付{dates.length ? <select ref={element => { if (element) dateFields.current.set(draft.key, element); else dateFields.current.delete(draft.key); }} name={`date-${draft.key}`} required value={draft.date} aria-label={`候補${index + 1}の日付`} onChange={e => updateDraft(draft.key, "date", e.currentTarget.value)}>{dates.map(date => <option key={date} value={date}>{requestedDateLabel(date)}</option>)}</select> : <input ref={element => { if (element) dateFields.current.set(draft.key, element); else dateFields.current.delete(draft.key); }} type="date" name={`date-${draft.key}`} required value={draft.date} aria-label={`候補${index + 1}の日付`} onInput={e => updateDraft(draft.key, "date", e.currentTarget.value)} onChange={e => updateDraft(draft.key, "date", e.currentTarget.value)} />}</label>
-          <label>開始時刻<input type="time" name={`time-${draft.key}`} required value={draft.time} aria-label={`候補${index + 1}の開始時刻`} onInput={e => updateDraft(draft.key, "time", e.currentTarget.value)} onChange={e => updateDraft(draft.key, "time", e.currentTarget.value)} /></label>
-        </div>
-        <button type="button" className="dh-engineer-proposal-remove" aria-label={`候補${index + 1}を削除`} disabled={drafts.length === 1} onClick={() => removeDraft(draft.key)}><Icon name="x" />削除</button>
-      </div>)}</div>
-      <button type="button" className="dh-engineer-secondary" onClick={addDraft}><Icon name="plus" />候補日時を追加</button>
-    </fieldset>
-    {error && <p className="dh-engineer-error" role="alert">{error}</p>}
-    <button type="submit" className="dh-engineer-primary" disabled={pending}>{pending ? "回答を保存中…" : request.status === "responded" ? "候補日時を更新する" : "この日時で回答する"}<Icon name="arrow" /></button>
-  </form>;
-}
-
-function RequestResponse({ request, pending, onSave }: ResponseProps) {
-  const [selected, setSelected] = useState<string[]>(request.availableSlotIds);
-  const [error, setError] = useState("");
-  const confirmed = request.status === "confirmed";
-  if (request.scheduleMode === "availability" && !confirmed) return <AvailabilityResponse request={request} pending={pending} onSave={onSave} />;
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const slotIds = new FormData(event.currentTarget).getAll("slots").map(String);
-    if (!slotIds.length) { setError("参加できる候補日時を1件以上選択してください。"); return; }
-    setError("");
-    await onSave(`/api/workflow/requests/${encodeURIComponent(request.id)}/respond`, { slotIds });
-  }
-  return <form className="dh-engineer-response" onSubmit={submit}>
-    <fieldset disabled={pending || confirmed}><legend>{confirmed ? "確定した日時" : "参加できる候補日時"}</legend><p className="dh-engineer-small">{confirmed ? "営業が面談日時を確定しました。予定から面談URLを確認できます。" : "参加できる日時をすべて選択してください。確定前であれば回答を変更できます。"}</p>
-      <div className="dh-engineer-slots">{request.candidates.map(slot => <label className={`dh-engineer-slot${request.confirmedSlotId === slot.id ? " is-confirmed" : ""}`} key={slot.id}><input type="checkbox" name="slots" value={slot.id} checked={confirmed ? request.confirmedSlotId === slot.id : selected.includes(slot.id)} onChange={event => setSelected(current => event.target.checked ? [...current, slot.id] : current.filter(id => id !== slot.id))} /><span>{slotLabel(slot.start, slot.end)}{request.confirmedSlotId === slot.id && <strong>確定</strong>}</span></label>)}</div>
-    </fieldset>
-    {error && <p className="dh-engineer-error" role="alert">{error}</p>}
-    {!confirmed && <button type="submit" className="dh-engineer-primary" disabled={pending}>{pending ? "回答を保存中…" : request.status === "responded" ? "回答を更新する" : "選択した日時で回答する"}<Icon name="arrow" /></button>}
-  </form>;
-}
-
 function requestSummary(request: InterviewRequest) {
-  if (request.status === "confirmed") return "面談日時が確定しました";
+  if (request.status === "confirmed") return "面談案内を確認できます";
+  if (request.responseKind === "unavailable") return "参加不可と回答済み・営業の調整待ち";
+  if (request.responseKind === "alternative") return `${request.availableSlotIds.length}件の代替日時を提案済み`;
   if (request.scheduleMode === "availability") return request.status === "requested" ? "都合のよい日時を回答してください" : `${request.availableSlotIds.length}件の候補日時を回答済み`;
   return `${request.candidates.length}件の候補日時${request.status === "responded" ? `・${request.availableSlotIds.length}件を回答済み` : ""}`;
 }
 
-function FeedbackForm({ event, pending, onSave }: { event: ScheduleEvent; pending: boolean; onSave: (path: string, payload: object) => Promise<boolean> }) {
-  const [values, setValues] = useState<FeedbackValues>({ duties: "", process: "", remote: "", impression: "", questions: [""] });
+function FeedbackForm({ event, pending, drafts, onSave }: { event: ScheduleEvent; pending: boolean; drafts: Map<string, FeedbackValues>; onSave: (path: string, payload: object) => Promise<boolean> }) {
+  const [values, setValues] = useState<FeedbackValues>(() => drafts.get(event.key) ?? { duties: "", process: "", remote: "", impression: "", questions: [""] });
+  useEffect(() => { drafts.set(event.key, values); }, [drafts, event.key, values]);
   const [error, setError] = useState("");
   const questionRefs = useRef<(HTMLTextAreaElement | null)[]>([]);
   const addQuestionRef = useRef<HTMLButtonElement>(null);
@@ -195,7 +126,9 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
   const [view, setView] = useState<View>("schedule");
   const [kind, setKind] = useState<Kind>("all");
   const [selectedEvent, setSelectedEvent] = useState("");
+  const [selectedPart, setSelectedPart] = useState<AgendaPart>("main");
   const [selectedInProgressEvent, setSelectedInProgressEvent] = useState("");
+  const [caseScope, setCaseScope] = useState<"joined" | "history">("joined");
   const [referenceEventId, setReferenceEventId] = useState<string | null>(null);
   const [referenceOrigin, setReferenceOrigin] = useState<ReferenceOrigin | null>(null);
   const [selectedRequest, setSelectedRequest] = useState("");
@@ -205,6 +138,9 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [preview, setPreview] = useState<NotificationPreview | null>(null);
+  const [mobileDetail, setMobileDetail] = useState(false);
+  const responseDrafts = useRef<EngineerResponseDrafts>(new Map());
+  const feedbackDrafts = useRef(new Map<string, FeedbackValues>());
   const detailRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -250,7 +186,10 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
         const requestId = params.get("request");
         const eventId = params.get("event");
         if (requestId && body.requests.some(request => request.id === requestId)) { setSelectedRequest(requestId); setView("requests"); focusDetail(); }
-        else if (eventId) { const linked = body.events.find(event => event.key === eventId); if (linked) openEvent(linked); }
+        else if (eventId) {
+          const linked = body.events.find(event => event.key === eventId);
+          if (linked) openEvent(linked, !linked.entry && !isWithdrawn(linked) && body.feedbacks.some(f => f.eventId === linked.key) ? { view: "schedule", eventId: "" } : undefined);
+        }
         deepLinkApplied.current = true;
       }
     }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "データを取得できませんでした。"); }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -312,7 +251,7 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
       setData(updated); setError("");
       if (!keepReference) { setReferenceEventId(null); setReferenceOrigin(null); }
       setNotice(item.entry ? "初回入場の完了を確認しました。入場中へ移動しました。" : "面談結果を確認しました。予定から外しました。");
-      if (item.entry) { setSelectedInProgressEvent(item.key); setView("inProgress"); focusDetail(); }
+      if (item.entry) { setCaseScope("joined"); setSelectedInProgressEvent(item.key); setView("inProgress"); focusDetail(); }
       else if (keepReference) focusDetail();
       else { setSelectedEvent(""); requestAnimationFrame(backToList); }
     } catch (reason) {
@@ -325,22 +264,65 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
   const questions = data?.questions ?? [];
   const feedbacks = data?.feedbacks ?? [];
   const notifications = data?.notifications ?? [];
-  const scheduledEvents = events.filter(item => !item.engineerConfirmedAt);
+  const submittedKeys = new Map(feedbacks.map(item => [item.eventId, item.submittedAt]));
+  const archivedAt = (item: ScheduleEvent) => submittedKeys.get(item.key) || item.engineerConfirmedAt;
+  const unreadFollowups = events.filter(item => !item.entry && !isWithdrawn(item) && !item.noticeReadAt &&
+    updatedAfterInterview(item, archivedAt(item))).sort((a, b) => Date.parse(b.changes[0].at) - Date.parse(a.changes[0].at));
+  const scheduledEvents = events.filter(item => !item.engineerConfirmedAt && !isWithdrawn(item) &&
+    (item.entry || item.result !== "pending" || !submittedKeys.has(item.key)));
   const inProgressEntries = events.filter(item => item.entry && item.engineerConfirmedAt);
-  const filteredEvents = view === "inProgress" ? inProgressEntries : scheduledEvents.filter(event => kind === "all" || event.type === kind);
-  const referenceEvent = view === "schedule" && referenceEventId ? events.find(item => item.key === referenceEventId && !item.entry && (item.engineerConfirmedAt || referenceOrigin)) : undefined;
-  const event = referenceEvent ?? filteredEvents.find(item => item.key === (view === "inProgress" ? selectedInProgressEvent : selectedEvent)) ?? filteredEvents.find(item => item.stamp >= Date.UTC(2026, 10, 5)) ?? filteredEvents[0];
+  const projects = new Map((data?.projects ?? []).map(project => [project.id, project]));
+  const importedCases = (data?.importedCases ?? []).flatMap(record => {
+    const project = projects.get(record.projectId);
+    return record.studentId === user.id && project ? [{ record, project }] : [];
+  }).sort((a, b) => (b.record.interviewDate || "").localeCompare(a.record.interviewDate || "") || b.record.sourceRow - a.record.sourceRow);
+  const joinedCases = importedCases.filter(({ record }) => record.status === "joined");
+  const showHistory = view === "inProgress" && caseScope === "history" && importedCases.length > 0;
+  const listedImports = view === "inProgress" ? (showHistory ? importedCases : joinedCases) : [];
+  const agenda = agendaItems(scheduledEvents);
+  const filteredRows = view === "inProgress" ? (showHistory ? [] : agendaItems(inProgressEntries)) : agenda.filter(row => kind === "all" || row.event.type === kind);
+  const selectedImport = listedImports.find(({ project }) => selectedInProgressEvent === project.id) ?? (!filteredRows.length ? listedImports[0] : undefined);
+  const changes = events.filter(isWithdrawn).sort((a, b) => Number(Boolean(a.noticeReadAt)) - Number(Boolean(b.noticeReadAt)) || b.stamp - a.stamp);
+  const selectedChange = view === "schedule" && kind !== "entry" ? changes.find(item => item.key === selectedEvent) : undefined;
+  const targetKey = view === "inProgress" ? selectedInProgressEvent : selectedEvent;
+  const currentRow = filteredRows.find(row => row.event.key === targetKey && row.part === (view === "inProgress" ? "main" : selectedPart)) ??
+    filteredRows.find(row => row.event.key === targetKey) ??
+    filteredRows.find(row => jstDate(row.at).getTime() >= Date.now()) ?? filteredRows[0];
+  const referenceEvent = view === "schedule" && referenceEventId ? events.find(item => item.key === referenceEventId && !item.entry) : undefined;
+  const event = referenceEvent ?? selectedChange ?? currentRow?.event;
   const originalInterview = event?.entry ? sourceInterview(event, events) : undefined;
   const request = requests.find(item => item.id === selectedRequest) ?? requests[0];
-  const meetings = events.filter(item => !item.entry);
-  const orderedFeedbackMeetings = [...meetings].sort((a, b) => Number(feedbacks.some(feedback => feedback.eventId === a.key)) - Number(feedbacks.some(feedback => feedback.eventId === b.key)));
+  const meetings = events.filter(item => !item.entry && (!isWithdrawn(item) || submittedKeys.has(item.key)));
+  const now = Date.now();
+  function feedbackDue(item: ScheduleEvent) {
+    if (submittedKeys.has(item.key)) return false;
+    const scheduledEnd = new Date(item.stamp).toISOString().slice(0, 10) + "T" + (item.end || item.time);
+    return item.result !== "pending" || jstDate(scheduledEnd).getTime() <= now;
+  }
+  const feedbackOrder = (item: ScheduleEvent) => submittedKeys.has(item.key) ? 2 : feedbackDue(item) ? 0 : 1;
+  const orderedFeedbackMeetings = [...meetings].sort((a, b) => feedbackOrder(a) - feedbackOrder(b));
   const feedbackEvent = orderedFeedbackMeetings.find(item => item.key === selectedFeedback) ?? orderedFeedbackMeetings[0];
   const submittedFeedback = feedbacks.find(item => item.eventId === feedbackEvent?.key);
   const pendingRequestCount = requests.filter(item => item.status === "requested").length;
-  const pendingFeedbackCount = meetings.filter(item => !feedbacks.some(feedback => feedback.eventId === item.key)).length;
+  const pendingFeedbackCount = meetings.filter(feedbackDue).length;
   const awaitingSales = (item: ScheduleEvent) => !item.entry && item.result === "pending" && feedbacks.some(feedback => feedback.eventId === item.key);
+  function requestStateLabel(item: InterviewRequest) {
+    if (item.status !== "confirmed") return item.responseKind === "unavailable" ? "参加不可・回答済み" : item.responseKind === "alternative" ? "代替日時を提案済み" : requestLabels[item.status];
+    const related = events.filter(event => event.requestId === item.id && event.studentId === item.studentId);
+    const entry = related.find(event => event.entry);
+    if (entry) return entry.engineerConfirmedAt ? "参画（入場済み）" : "初回入場予定";
+    const current = related.find(event => !event.entry && (event.round || 1) === (item.round || 1));
+    if (current && isWithdrawn(current)) return stateLabel(current);
+    return current && current.result !== "pending" ? interviewResultLabels[current.result] : requestLabels.confirmed;
+  }
+  function requestOverview(item: InterviewRequest) {
+    return item.status === "confirmed" && requestStateLabel(item) !== requestLabels.confirmed
+      ? `面談 ${item.round || 1}/${item.totalRounds || 1} の日程・所感を確認できます`
+      : `面談 ${item.round || 1}/${item.totalRounds || 1}・${requestSummary(item)}`;
+  }
 
   function focusDetail() {
+    setMobileDetail(true);
     requestAnimationFrame(() => {
       if (window.matchMedia("(max-width: 800px)").matches) {
         detailRef.current?.scrollIntoView({ block: "start" });
@@ -348,16 +330,17 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
       }
     });
   }
-  function backToList() { listRef.current?.scrollIntoView({ block: "start" }); (listRef.current?.querySelector<HTMLButtonElement>("[aria-pressed=true]") ?? headingRef.current)?.focus({ preventScroll: true }); }
+  function backToList() { setMobileDetail(false); requestAnimationFrame(() => { listRef.current?.scrollIntoView({ block: "start" }); (listRef.current?.querySelector<HTMLButtonElement>("[aria-pressed=true]") ?? headingRef.current)?.focus({ preventScroll: true }); }); }
   function showFeedback(eventId: string) {
     if (view === "inProgress" && event?.entry) setSelectedInProgressEvent(event.key);
     setSelectedFeedback(eventId); setView("feedback"); focusDetail();
   }
   function openEvent(item: ScheduleEvent, origin?: ReferenceOrigin) {
     setKind("all");
+    setSelectedPart(isWithdrawn(item) ? "change" : "main");
     if (item.entry && item.engineerConfirmedAt) {
-      setSelectedInProgressEvent(item.key); setReferenceEventId(null); setReferenceOrigin(null); setView("inProgress");
-    } else if (!item.entry && (item.engineerConfirmedAt || origin)) {
+      setCaseScope("joined"); setSelectedInProgressEvent(item.key); setReferenceEventId(null); setReferenceOrigin(null); setView("inProgress");
+    } else if (!item.entry && (item.engineerConfirmedAt || submittedKeys.has(item.key) || origin)) {
       setReferenceOrigin(origin ?? { view: "schedule", eventId: selectedEvent });
       setReferenceEventId(item.key); setView("schedule");
     } else {
@@ -367,12 +350,14 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
   }
   function showOriginalInterview(interview: ScheduleEvent) {
     if (view === "inProgress" && event?.entry) setSelectedInProgressEvent(event.key);
-    openEvent(interview, { view: view === "inProgress" ? "inProgress" : "schedule", eventId: event?.key ?? selectedEvent });
+    openEvent(interview, referenceOrigin ?? { view: view === "inProgress" ? "inProgress" : "schedule", eventId: event?.key ?? selectedEvent });
   }
   function closeReference() {
     setReferenceEventId(null); setReferenceOrigin(null);
     if (referenceOrigin?.view === "inProgress") {
       setSelectedInProgressEvent(referenceOrigin.eventId); setView("inProgress"); focusDetail();
+    } else if (referenceOrigin?.view === "feedback") {
+      setSelectedFeedback(referenceOrigin.eventId); setView("feedback"); focusDetail();
     } else {
       setSelectedEvent(referenceOrigin?.eventId ?? ""); setView("schedule"); requestAnimationFrame(backToList);
     }
@@ -391,54 +376,120 @@ export default function EngineerDashboard({ user }: { user: DemoUser }) {
   function renderEventDetails() {
     if (!event) return <Empty title={view === "inProgress" ? "入場中の案件はありません" : "予定を選択してください"} />;
     const reference = Boolean(referenceEvent);
+    const withdrawn = isWithdrawn(event);
     const entered = event.entry && Boolean(event.engineerConfirmedAt);
     const feedback = feedbacks.find(item => item.eventId === event.key);
-    const resultLabel = event.result === "passed" ? "合格" : event.result === "rejected" ? "不合格" : "未登録";
+    const resultLabel = interviewResultLabels[event.result];
     return <>
-      {reference && <div className="dh-engineer-reference-note"><span>{event.engineerConfirmedAt ? "確認済みの面談の記録です。予定には含まれません。" : "初回入場に関連する面談の記録です。"}</span><button type="button" onClick={closeReference}>{referenceOrigin?.view === "inProgress" ? "入場中に戻る" : "予定一覧に戻る"}</button></div>}
+      {reference && <div className="dh-engineer-reference-note"><span>{event.engineerConfirmedAt ? "確認済みの面談の記録です。予定には含まれません。" : "過去の面談の記録です。"}</span><button type="button" onClick={closeReference}>{referenceOrigin?.view === "inProgress" ? "入場中に戻る" : referenceOrigin?.view === "feedback" ? "所感・質問に戻る" : "予定一覧に戻る"}</button></div>}
       <div className={`dh-engineer-detail-head${event.entry ? " is-entry" : ""}`}>
         <p><Icon name="folder" />{reference ? "面談の記録" : entered ? "入場中の案件" : "案件詳細"}<span>/ {event.key}</span></p><h2>{event.project}</h2>
-        <span className={`dh-engineer-badge ${event.entry ? "is-entry" : awaitingSales(event) ? "is-waiting is-feedback-waiting" : ""}`}>{event.entry ? entered ? "入場中" : "初回入場　確定" : `${event.route}　${reference && event.engineerConfirmedAt ? "確認済み" : awaitingSales(event) ? "所感提出済み・営業確認待ち" : event.result === "pending" ? "確定" : resultLabel}`}</span>
+        <span className={`dh-engineer-badge ${event.entry ? "is-entry" : awaitingSales(event) ? "is-waiting is-feedback-waiting" : ""}`}>{event.entry ? entered ? "入場中" : "初回入場　確定" : withdrawn ? stateLabel(event) : `${event.route}　${reference && event.engineerConfirmedAt ? "確認済み" : awaitingSales(event) ? "所感提出済み・営業確認待ち" : event.result === "pending" ? "確定" : resultLabel}`}</span>
       </div>
-      <section className="dh-engineer-section"><h3>{event.entry ? entered ? "初回入場の記録" : "初回入場の予定" : reference ? "面談時の情報" : "面談の予定"}</h3><Facts rows={[
-        [event.entry ? "集合時刻" : "日時", <>{dateLabel(event.stamp)}<br /><strong>{event.time}{event.end ? ` – ${event.end}` : event.entry ? " 集合" : ""}</strong></>],
-        [event.entry ? "集合場所" : "実施形式", event.format], ["参画者", event.participantName || "未登録"], ["参画者(ひらがな)", event.participantNameKana || "未登録"], ["担当営業", "青木 美咲"],
-        ...(!event.entry ? [["面談URL", event.url && /^https?:\/\//i.test(event.url) ? <a href={event.url} target="_blank" rel="noreferrer">{event.url}<span className="dh-engineer-link-caption">別タブで開く <Icon name="right" /></span></a> : "未登録"] as [string, ReactNode]] : []),
-      ]} /><button type="button" className="dh-engineer-secondary" onClick={() => setPreview(calendarPreview(event))}><Icon name="calendar" />カレンダー登録内容を確認</button></section>
-      {!event.entry && event.result !== "pending" && <section className={`dh-engineer-section dh-engineer-result ${event.result === "rejected" ? "is-rejected" : "is-passed"}`}><h3>面談結果</h3><p className="dh-engineer-result-label"><Icon name={event.result === "passed" ? "check" : "x"} />{resultLabel}</p>{event.engineerConfirmedAt ? <p className="dh-engineer-small">確認済み：{dateTimeLabel(event.engineerConfirmedAt)}</p> : <><p className="dh-engineer-body">営業から登録された面談結果です。確認すると、この面談は予定から外れます。</p><button type="button" className="dh-engineer-primary" disabled={pending} onClick={() => acknowledge(event)}>{pending ? "確認しています…" : "確認"}<Icon name="check" /></button></>}</section>}
+      {!event.entry && <EngineerInterviewPlan event={event} part={reference ? "main" : currentRow?.part ?? "main"} pending={pending} historical={reference || event.result !== "pending"} archivedAt={archivedAt(event)} dateTimeLabel={dateTimeLabel}
+        onAcknowledge={() => { void save(`/api/workflow/events/${encodeURIComponent(event.key)}/notice-read`, { revision: event.noticeRevision }); }} />}
+      <section className="dh-engineer-section"><h3>{event.entry ? entered ? "初回入場の記録" : "初回入場の予定" : "面談の担当情報"}</h3><Facts rows={[
+        ...(event.entry ? [["集合時刻", <>{dateLabel(event.stamp)}<br /><strong>{event.time} 集合</strong></>]] as [string, ReactNode][] : []),
+        [event.entry ? "集合場所" : "実施形式", event.format], ["参画者", event.participantName || "未登録"], ["参画者(ひらがな)", event.participantNameKana || "未登録"], ["担当営業", data?.projects.find(project => project.id === event.projectId)?.salesName || "未設定"],
+
+      ]} />{!withdrawn && <button type="button" className="dh-engineer-secondary" onClick={() => setPreview(calendarPreview(event))}><Icon name="calendar" />カレンダー登録内容を確認</button>}</section>
+      {!event.entry && !withdrawn && event.result !== "pending" && <section className={`dh-engineer-section dh-engineer-result ${(event.result === "rejected" || event.result === "declined") ? "is-rejected" : "is-passed"}`}><h3>面談結果</h3><p className="dh-engineer-result-label"><Icon name={event.result === "rejected" || event.result === "declined" ? "x" : "check"} />{resultLabel}</p>{event.engineerConfirmedAt ? <p className="dh-engineer-small">確認済み：{dateTimeLabel(event.engineerConfirmedAt)}</p> : <><p className="dh-engineer-body">営業から登録された面談結果です。確認すると、この面談は予定から外れます。</p><button type="button" className="dh-engineer-primary" disabled={pending} onClick={() => acknowledge(event)}>{pending ? "確認しています…" : "確認"}<Icon name="check" /></button></>}</section>}
       {event.entry && !entered && <section className="dh-engineer-section dh-engineer-entry-confirm"><h3>初回入場の完了確認</h3><p className="dh-engineer-body">初回入場が完了したら確認してください。確認すると入場中へ移動します。</p><button type="button" className="dh-engineer-primary" disabled={pending} onClick={() => acknowledge(event)}>{pending ? "確認しています…" : "確認"}<Icon name="check" /></button></section>}
       {entered && <section className="dh-engineer-section dh-engineer-entry-confirm"><h3>入場状況</h3><p className="dh-engineer-entry-state"><Icon name="check" />入場中</p><p className="dh-engineer-small">初回入場の完了を確認済み：{dateTimeLabel(event.engineerConfirmedAt!)}</p></section>}
       {event.entry && <section className="dh-engineer-section"><h3>当日の案内</h3><p className="dh-engineer-body">{event.guidance || "案内はまだ登録されていません。"}</p></section>}
-      <section className="dh-engineer-section"><h3>案件概要</h3><p className="dh-engineer-body">{event.notes || "案件概要はまだ登録されていません。"}</p></section>
+      <section className="dh-engineer-section"><h3>案件概要・担当者</h3><p className="dh-engineer-body">{event.notes || "案件概要はまだ登録されていません。"}</p><CaseMetadata item={event} includeCompanies /></section>{data && <section className="dh-engineer-section"><h3>この案件の面談履歴</h3><InterviewHistory data={data} projectId={event.projectId} studentId={event.studentId} onEvent={showOriginalInterview} /></section>}
       <AttachmentSection request={requests.find(item => item.id === event.requestId)} />
       {originalInterviewDetails()}
       <section className="dh-engineer-section"><h3>この案件の過去質問<span className="question-count">{questions.filter(question => question.project === event.projectId).length}</span></h3>{questions.filter(question => question.project === event.projectId).map((question, index) => <details className="query" key={question.key}><summary><span className="q-no">Q{index + 1}</span><strong>{question.title}</strong><Icon name="chevright" /></summary><p>{question.context || "この案件の面談で聞かれた質問です。"}</p></details>)}{!questions.some(question => question.project === event.projectId) && <p className="dh-engineer-small">登録された質問はありません。</p>}</section>
-      {!event.entry && <section className="dh-engineer-section"><h3>面談の振り返り</h3><p className="dh-engineer-small">{feedback ? "所感と聞かれた質問は提出済みです。" : "登録された所感はありません。"}</p>{(feedback || !reference) && <button className="dh-engineer-primary" type="button" onClick={() => showFeedback(event.key)}>{feedback ? "提出した所感を見る" : "所感・質問を入力する"}<Icon name="arrow" /></button>}</section>}
+      {!event.entry && !withdrawn && <section className="dh-engineer-section"><h3>面談の振り返り</h3><p className="dh-engineer-small">{feedback ? "所感と聞かれた質問は提出済みです。" : "登録された所感はありません。"}</p>{(feedback || !reference) && <button className="dh-engineer-primary" type="button" onClick={() => showFeedback(event.key)}>{feedback ? "提出した所感を見る" : "所感・質問を入力する"}<Icon name="arrow" /></button>}</section>}
       {back}
     </>;
   }
+  function renderAgendaRow(row: AgendaItem) {
+    const item = row.event;
+    const prep = row.part === "prep";
+    const selected = !selectedImport && !referenceEvent && !selectedChange && currentRow?.event.key === item.key && currentRow.part === row.part;
+    const waitingForUrl = !item.entry && item.result === "pending" && !(prep ? item.prepUrl : item.url);
+    const resultPending = !item.entry && item.result !== "pending";
+    function select() {
+      if (view === "inProgress") setSelectedInProgressEvent(item.key);
+      else setSelectedEvent(item.key);
+      setSelectedPart(row.part); setReferenceEventId(null); setReferenceOrigin(null); focusDetail();
+    }
+    return <button className={`dh-engineer-schedule-row${selected ? " selected" : ""}`} type="button"
+      key={item.key + "-" + row.part} aria-pressed={selected} onClick={select}>
+      <span className="dh-engineer-row-date"><b>{Number(row.at.slice(5, 7))}/{row.at.slice(8, 10)}</b><time dateTime={row.at + "+09:00"}>{row.at.slice(11, 16)}</time></span>
+      <span className="dh-engineer-row-content"><span className={`kind mark-${item.type}`}>{item.entry ? "初回入場" : prep ? "事前打合せ" : "本面談"}</span>
+        <strong>{item.project}</strong><span>{item.format}<i>・</i>{item.entry ? view === "inProgress" ? "入場中" : "入場案内あり" : item.route}
+          {waitingForUrl && <span className="dh-engineer-row-status">URL待ち</span>}
+          {!item.entry && item.noticeRevision > 0 && !item.noticeReadAt && !resultPending && <span className="dh-engineer-row-status">案内未確認</span>}
+          {resultPending && <span className="dh-engineer-row-status">面談結果：{interviewResultLabels[item.result]}・確認待ち</span>}
+        </span></span><Icon name="chevright" />
+    </button>;
+  }
   function calendarPreview(item: ScheduleEvent): NotificationPreview {
-    return { title: item.entry ? "初回入場予定の登録内容" : "面談予定の登録内容", lines: [ { label: "案件", value: item.project }, { label: item.entry ? "入場者" : "参加者", value: item.person }, { label: item.entry ? "集合時刻" : "日時", value: `${dateLabel(item.stamp)} ${item.time}${item.end ? ` – ${item.end}` : item.entry ? " 集合" : ""}` }, { label: item.entry ? "集合場所" : "面談URL", value: item.entry ? item.format : item.url || "未登録" }, ...(item.entry ? [{ label: "当日の案内", value: item.guidance || "記載なし" }] : []) ] };
+    const lines = [{ label: "案件", value: item.project }, { label: item.entry ? "面談者" : "参加者", value: item.person }];
+    if (item.entry) {
+      lines.push({ label: "参画者", value: item.participantName || "未登録" },
+        { label: "集合時刻", value: dateLabel(item.stamp) + " " + item.time + " 集合" },
+        { label: "集合場所", value: item.format }, { label: "当日の案内", value: item.guidance || "記載なし" });
+    } else {
+      if (item.prepStart) lines.push({ label: "事前打合せ", value: dateTimeLabel(item.prepStart) }, { label: "事前打合せURL", value: item.prepUrl || "URL待ち" });
+      lines.push({ label: "本面談", value: dateLabel(item.stamp) + " " + item.time + (item.end ? " – " + item.end : "") },
+        { label: "本面談URL", value: item.url || "URL待ち" });
+    }
+    return { title: item.entry ? "初回入場予定の登録内容" : "面談予定の登録内容", lines };
   }
 
   return <>
     <a className="skip-link" href="#dh-engineer-title">本文へ移動</a>
-    <header className="mast"><div className="dh-engineer-mast-inner"><a className="logo" href="/engineer" aria-label="DealHunter エンジニアホーム"><img src="/logo.svg" width="38" height="38" alt="" /><span>DealHunter</span></a><nav className="topnav" aria-label="エンジニアメニュー">{([ ["schedule", "calendar", "予定", scheduledEvents.length], ["requests", "inbox", "面談依頼", pendingRequestCount], ["feedback", "pen", "所感・質問", pendingFeedbackCount], ["inProgress", "brief", "入場中", inProgressEntries.length] ] as const).map(([key, icon, label, count]) => <button type="button" key={key} className={view === key ? "active" : ""} onClick={() => { setView(key); setReferenceEventId(null); setError(""); setNotice(""); }} aria-current={view === key ? "page" : undefined}><Icon name={icon} />{label}{count > 0 && <span className="nav-count">{count}</span>}</button>)}</nav><div className="dh-engineer-account"><span className="dh-engineer-role">エンジニア</span><span className="dh-engineer-user">{user.name}</span><form action={logout}><button type="submit" className="logout-btn">ログアウト</button></form></div></div></header>
-    <main className="dh-engineer-main"><div className="dh-engineer-page-head"><div className="context"><span className="context-mark" />エンジニアデスク<span className="sep">/</span>自分の案件</div><div className="dh-engineer-title-row"><div><h1 id="dh-engineer-title" ref={headingRef} tabIndex={-1}>{view === "schedule" ? referenceEvent ? "面談の記録" : "面談・入場予定" : view === "inProgress" ? "入場中" : view === "requests" ? "面談依頼" : "所感・質問"}</h1><p>{view === "schedule" ? referenceEvent ? referenceEvent.engineerConfirmedAt ? "確認済みの面談記録です。予定には含まれません。" : "初回入場に関連する面談の記録を表示しています。" : `${user.name}さんの面談と、初回入場の予定です。` : view === "inProgress" ? "入場中の案件と、これまでの面談記録を確認できます。" : view === "requests" ? "案件の概要を確認し、参加できる候補日時を回答してください。" : "面談で聞いたことを記録し、次の面談準備につなげましょう。"}</p></div><button type="button" className="dh-engineer-refresh" onClick={reload} disabled={loading || pending}>{loading ? "更新中…" : "更新"}</button></div></div>
+    <header className="mast"><div className="dh-engineer-mast-inner"><a className="logo" href="/engineer" aria-label="DealHunter エンジニアホーム"><img src="/logo.svg" width="38" height="38" alt="" /><span>DealHunter</span></a><nav className="topnav" aria-label="エンジニアメニュー">{([ ["schedule", "calendar", "予定", agenda.length], ["requests", "inbox", "面談依頼", pendingRequestCount], ["feedback", "pen", "所感・質問", pendingFeedbackCount], ["inProgress", "brief", importedCases.length ? "入場中・履歴" : "入場中", inProgressEntries.length + joinedCases.length] ] as const).map(([key, icon, label, count]) => <button type="button" key={key} className={view === key ? "active" : ""} onClick={() => { setView(key); setMobileDetail(false); setReferenceEventId(null); setReferenceOrigin(null); setError(""); setNotice(""); }} aria-current={view === key ? "page" : undefined}><Icon name={icon} />{label}{count > 0 && <span className="nav-count">{count}</span>}</button>)}</nav><div className="dh-engineer-account"><span className="dh-engineer-role">エンジニア</span><span className="dh-engineer-user">{user.name}</span><form action={logout}><button type="submit" className="logout-btn">ログアウト</button></form></div></div></header>
+    <main className="dh-engineer-main"><div className="dh-engineer-page-head"><div className="context"><span className="context-mark" />エンジニアデスク<span className="sep">/</span>自分の案件</div><div className="dh-engineer-title-row"><div><h1 id="dh-engineer-title" ref={headingRef} tabIndex={-1}>{view === "schedule" ? referenceEvent ? "面談の記録" : "面談・入場予定" : view === "inProgress" ? showHistory ? "案件履歴" : "入場中" : view === "requests" ? "面談依頼" : "所感・質問"}</h1><p>{view === "schedule" ? referenceEvent ? referenceEvent.engineerConfirmedAt ? "確認済みの面談記録です。予定には含まれません。" : "案件に関連する面談の記録を表示しています。" : `${user.name}さんの面談と、初回入場の予定です。` : view === "inProgress" ? showHistory ? "これまでの面談結果と案件概要を確認できます。" : "入場中の案件と、これまでの面談記録を確認できます。" : view === "requests" ? "案件の概要を確認し、参加できる候補日時を回答してください。" : "面談で聞いたことを記録し、次の面談準備につなげましょう。"}</p></div><button type="button" className="dh-engineer-refresh" onClick={reload} disabled={loading || pending}>{loading ? "更新中…" : "更新"}</button></div></div>
       {error && <div ref={errorRef} tabIndex={-1} className="dh-engineer-error dh-engineer-page-message" role="alert"><span>{error}</span><button type="button" onClick={reload} disabled={loading || pending}>もう一度読み込む</button></div>}{notice && <p className="dh-engineer-success dh-engineer-page-message" role="status"><Icon name="check" />{notice}</p>}
-      {!data ? <div className="dh-engineer-board dh-engineer-loading"><p role="status">{loading ? "自分の案件を読み込んでいます…" : "データを取得できませんでした。上のボタンから再度読み込んでください。"}</p></div> : <div className="dh-engineer-board">
-        <section className="dh-engineer-list-panel" aria-label={view === "schedule" ? "自分の予定一覧" : view === "inProgress" ? "入場中の案件一覧" : view === "requests" ? "自分宛ての面談依頼" : "所感の提出状況"}>
-          <div className="dh-engineer-list-heading">{view === "schedule" ? <div className="type-tabs" aria-label="予定の種類">{([ ["all", "すべて"], ["meet", "面談"], ["entry", "初回入場"] ] as const).map(([value, label]) => <button key={value} type="button" className={kind === value ? "active" : ""} aria-pressed={kind === value} onClick={() => { setKind(value); setReferenceEventId(null); const items = scheduledEvents.filter(item => value === "all" || item.type === value); if (!items.some(item => item.key === selectedEvent)) setSelectedEvent(items[0]?.key ?? ""); }}>{label}</button>)}</div> : <strong>{view === "inProgress" ? "入場中の案件" : view === "requests" ? "案件ごとの依頼" : "面談ごとの記録"}</strong>}<span>{view === "schedule" || view === "inProgress" ? filteredEvents.length : view === "requests" ? requests.length : meetings.length}件</span></div>
+      {view === "schedule" && !mobileDetail && <SharedInterviewSlots key={user.id} studentId={user.id} name={user.name} editable />}
+      {!data ? <div className="dh-engineer-board dh-engineer-loading"><p role="status">{loading ? "自分の案件を読み込んでいます…" : "データを取得できませんでした。上のボタンから再度読み込んでください。"}</p></div> : <div className={`dh-engineer-board${mobileDetail ? " is-detail" : ""}`}>
+        <section className="dh-engineer-list-panel" aria-label={view === "schedule" ? "自分の予定一覧" : view === "inProgress" ? (showHistory ? "案件履歴一覧" : "入場中の案件一覧") : view === "requests" ? "自分宛ての面談依頼" : "所感の提出状況"}>
+          <div className="dh-engineer-list-heading">{view === "schedule" ? <div className="type-tabs" aria-label="予定の種類">{([ ["all", "すべて"], ["meet", "面談"], ["entry", "初回入場"] ] as const).map(([value, label]) => <button key={value} type="button" className={kind === value ? "active" : ""} aria-pressed={kind === value} onClick={() => { setKind(value); setReferenceEventId(null); setReferenceOrigin(null); setSelectedEvent(""); setSelectedPart("main"); }}>{label}</button>)}</div> : view === "inProgress" && importedCases.length > 0 ? <div className="type-tabs" aria-label="案件の種類">
+            {([["joined", "入場中"], ["history", "案件履歴"]] as const).map(([scope, label]) => <button type="button" key={scope} className={caseScope === scope ? "active" : ""} aria-pressed={caseScope === scope} onClick={() => { setCaseScope(scope); setMobileDetail(false); }}>{label}</button>)}
+          </div> : <strong>{view === "inProgress" ? "入場中の案件" : view === "requests" ? "案件ごとの依頼" : "面談ごとの記録"}</strong>}<span>{view === "schedule" || view === "inProgress" ? filteredRows.length + listedImports.length : view === "requests" ? requests.length : meetings.length}件</span></div>
           <div ref={listRef} className="dh-engineer-list">
-            {(view === "schedule" || view === "inProgress") && (filteredEvents.length ? filteredEvents.map(item => <button className={`dh-engineer-schedule-row${event?.key === item.key ? " selected" : ""}`} type="button" key={item.key} aria-pressed={event?.key === item.key} onClick={() => { if (view === "inProgress") setSelectedInProgressEvent(item.key); else setSelectedEvent(item.key); setReferenceEventId(null); focusDetail(); }}><span className="dh-engineer-row-date"><b>{new Date(item.stamp).getUTCMonth() + 1}/{String(new Date(item.stamp).getUTCDate()).padStart(2, "0")}</b><time>{item.time}</time></span><span className="dh-engineer-row-content"><span className={`kind mark-${item.type}`}>{item.entry ? "初回入場" : "面談"}</span><strong>{item.project}</strong><span>{item.format}<i>・</i>{item.entry ? view === "inProgress" ? "入場中" : "入場案内あり" : item.route}{awaitingSales(item) && <span className="dh-engineer-row-status">所感提出済み・営業確認待ち</span>}{!item.entry && item.result !== "pending" && <span className={`dh-engineer-row-status ${item.result === "rejected" ? "is-rejected" : "is-passed"}`}>面談結果：{item.result === "passed" ? "合格" : "不合格"}・確認待ち</span>}</span></span><Icon name="chevright" /></button>) : <Empty title={view === "inProgress" ? "入場中の案件はありません" : "表示する予定はありません"}>{view === "inProgress" ? "初回入場の完了を確認すると、ここに案件が表示されます。" : "確定した予定を表示します。確認済みの予定は一覧から外れ、入場中の案件は「入場中」タブで確認できます。"}</Empty>)}
-            {view === "requests" && (requests.length ? requests.map(item => <button className={`dh-engineer-item-row${request?.id === item.id ? " selected" : ""}`} key={item.id} type="button" aria-pressed={request?.id === item.id} onClick={() => { setSelectedRequest(item.id); focusDetail(); }}><span className={`dh-engineer-badge ${item.status === "requested" ? "is-waiting" : ""}`}>{requestLabels[item.status]}</span><strong>{item.project}</strong><span>{requestSummary(item)}</span><Icon name="chevright" /></button>) : <Empty title="面談依頼はありません">新しい依頼が届くと、ここに表示されます。</Empty>)}
-            {view === "feedback" && (orderedFeedbackMeetings.length ? orderedFeedbackMeetings.map(item => { const submitted = feedbacks.some(feedback => feedback.eventId === item.key); return <button className={`dh-engineer-item-row${feedbackEvent?.key === item.key ? " selected" : ""}`} key={item.key} type="button" aria-pressed={feedbackEvent?.key === item.key} onClick={() => { setSelectedFeedback(item.key); focusDetail(); }}><span className={`dh-engineer-badge ${submitted ? "is-submitted" : "is-waiting"}`}>{submitted ? "提出済み" : "所感未提出"}</span><strong>{item.project}</strong><span>{dateLabel(item.stamp)} {item.time}・{item.route}</span><Icon name="chevright" /></button>; }) : <Empty title="記録する面談はまだありません">面談が登録されると、所感や質問を入力できます。</Empty>)}
+            {view === "schedule" && kind !== "entry" && unreadFollowups.length > 0 && <div className="dh-withdrawn-list">
+              <h3>面談後に届いた案内 <span>{unreadFollowups.length}件未確認</span></h3>
+              {unreadFollowups.map(item => <button type="button" key={item.key} className="dh-engineer-item-row"
+                aria-pressed={referenceEventId === item.key} onClick={() => openEvent(item, { view: "schedule", eventId: "" })}>
+                <span className="dh-engineer-badge is-waiting">未確認</span><strong>{item.project}</strong>
+                <span>{item.route}・{item.shareFeedback && item.clientFeedback ? "先方評価・案内の更新" : "面談案内の更新"}</span><Icon name="chevright" />
+              </button>)}
+            </div>}
+            {(view === "schedule" || view === "inProgress") && filteredRows.map(renderAgendaRow)}
+            {listedImports.map(({ record, project }) => <button key={project.id} type="button" className={`dh-engineer-item-row${selectedImport?.project.id === project.id ? " selected" : ""}`} aria-pressed={selectedImport?.project.id === project.id} onClick={() => { setSelectedInProgressEvent(project.id); focusDetail(); }}>
+              <span className={`dh-engineer-badge${record.status === "joined" ? " is-entry" : ""}`}>{importedCaseStage(record)}</span><strong>{project.name}</strong>
+              <span>面談日 {record.interviewDate || "未入力"} · {project.upperCompany || "上位会社未登録"}</span><Icon name="chevright" />
+            </button>)}
+            {(view === "schedule" || view === "inProgress") && !filteredRows.length && !listedImports.length && <Empty title={view === "inProgress" ? "入場中の案件はありません" : "表示する予定はありません"}>{view === "inProgress" ? "初回入場の完了を確認すると、ここに案件が表示されます。" : "日程が決まると、ここに予定が表示されます。"}</Empty>}
+            {view === "schedule" && kind !== "entry" && changes.length > 0 && <div className="dh-withdrawn-list">
+              <h3>延期・中止の連絡 <span>{changes.filter(item => !item.noticeReadAt).length}件未確認</span></h3>
+              {changes.map(item => <button type="button" key={item.key} className="dh-engineer-item-row" aria-pressed={selectedChange?.key === item.key && !referenceEvent}
+                onClick={() => { setSelectedEvent(item.key); setSelectedPart("change"); setReferenceEventId(null); setReferenceOrigin(null); focusDetail(); }}>
+                <span className="dh-engineer-badge">{stateLabel(item)} ・ {item.noticeReadAt ? "確認済み" : "未確認"}</span><strong>{item.project}</strong><span>{item.changeReason}</span><Icon name="chevright" />
+              </button>)}
+            </div>}
+            {view === "requests" && (requests.length ? requests.map(item => <button className={`dh-engineer-item-row${request?.id === item.id ? " selected" : ""}`} key={item.id} type="button" aria-pressed={request?.id === item.id} onClick={() => { setSelectedRequest(item.id); focusDetail(); }}><span className={`dh-engineer-badge ${item.status === "requested" ? "is-waiting" : ""}`}>{requestStateLabel(item)}</span><strong>{item.project}</strong><span>{requestOverview(item)}</span><Icon name="chevright" /></button>) : <Empty title="面談依頼はありません">新しい依頼が届くと、ここに表示されます。</Empty>)}
+            {view === "feedback" && (orderedFeedbackMeetings.length ? orderedFeedbackMeetings.map(item => { const submitted = feedbacks.some(feedback => feedback.eventId === item.key); return <button className={`dh-engineer-item-row${feedbackEvent?.key === item.key ? " selected" : ""}`} key={item.key} type="button" aria-pressed={feedbackEvent?.key === item.key} onClick={() => { setSelectedFeedback(item.key); focusDetail(); }}><span className={`dh-engineer-badge ${submitted ? "is-submitted" : feedbackDue(item) ? "is-waiting" : ""}`}>{submitted ? "提出済み" : feedbackDue(item) ? "所感未提出" : "面談予定"}</span><strong>{item.project}</strong><span>{dateLabel(item.stamp)} {item.time}・{item.route}</span><Icon name="chevright" /></button>; }) : <Empty title="記録する面談はまだありません">面談が登録されると、所感や質問を入力できます。</Empty>)}
           </div>
         </section>
-        <aside ref={detailRef} className="dh-engineer-detail" aria-label="選択した案件の詳細" tabIndex={-1} key={`${view}-${view === "schedule" || view === "inProgress" ? event?.key : view === "requests" ? request?.id : feedbackEvent?.key}`}>
-          {(view === "schedule" || view === "inProgress") && renderEventDetails()}
-          {view === "requests" && (request ? <><div className="dh-engineer-detail-head"><p><Icon name="inbox" />面談依頼 <span>/ {request.id}</span></p><h2>{request.project}</h2><span className={`dh-engineer-badge ${request.status === "requested" ? "is-waiting" : ""}`}>{requestLabels[request.status]}</span></div><section className="dh-engineer-section"><h3>面談概要</h3><p className="dh-engineer-body">{request.summary}</p><Facts rows={[["面談者", request.person], ["参画者", request.participantName || "未登録"], ["参画者(ひらがな)", request.participantNameKana || "未登録"], ["担当営業", "青木 美咲"]]} /></section><AttachmentSection request={request} showEmpty /><section className="dh-engineer-section"><RequestResponse key={`${request.id}-${request.status}-${request.availableSlotIds.join(",")}`} request={request} pending={pending} onSave={(path, payload) => { setSelectedRequest(request.id); return save(path, payload); }} />{request.status === "confirmed" && <button type="button" className="dh-engineer-primary" onClick={() => { const linked = events.find(item => item.requestId === request.id && !item.entry); if (linked) openEvent(linked); }}>確定した面談を見る<Icon name="arrow" /></button>}</section>{back}</> : <Empty title="依頼を選択してください" />)}
-          {view === "feedback" && (feedbackEvent ? <><div className="dh-engineer-detail-head"><p><Icon name="pen" />面談の振り返り <span>/ {feedbackEvent.key}</span></p><h2>{feedbackEvent.project}</h2><p className="dh-engineer-feedback-date">{dateLabel(feedbackEvent.stamp)} {feedbackEvent.time}・{feedbackEvent.route}</p></div><section className="dh-engineer-section">{submittedFeedback ? <SubmittedFeedback feedback={submittedFeedback} /> : <FeedbackForm key={feedbackEvent.key} event={feedbackEvent} pending={pending} onSave={(path, payload) => { setSelectedFeedback(feedbackEvent.key); return save(path, payload); }} />}</section>{back}</> : <Empty title="面談を選択してください" />)}
+        <aside ref={detailRef} className="dh-engineer-detail" aria-label="選択した案件の詳細" tabIndex={-1} key={`${view}-${view === "schedule" || view === "inProgress" ? selectedImport?.project.id ?? event?.key : view === "requests" ? request?.id : feedbackEvent?.key}`}>
+          <div className="dh-engineer-mobile-back">{back}</div>
+          {(view === "schedule" || view === "inProgress") && (selectedImport ? <>
+            <div className={`dh-engineer-detail-head${selectedImport.record.status === "joined" ? " is-entry" : ""}`}><p><Icon name="folder" />案件履歴</p><h2>{selectedImport.project.name}</h2><span className="dh-engineer-badge">{importedCaseStage(selectedImport.record)}</span></div>
+            <section className="dh-engineer-section"><h3>面談・入場の記録</h3><ImportedCaseRecord record={selectedImport.record} /></section>
+            <section className="dh-engineer-section"><h3>案件概要・担当者</h3><p className="dh-engineer-body">{selectedImport.project.notes || "案件概要は未入力です。"}</p>
+              <Facts rows={[["面談者", selectedImport.record.person], ["参画者", selectedImport.project.participantName || "未登録"], ["担当営業", selectedImport.project.salesName || "未設定"], ["リーダー", selectedImport.project.leaderName || "未設定"]]} />
+              <CaseMetadata item={selectedImport.project} includeCompanies includeRemarks /></section>
+            {back}
+          </> : renderEventDetails())}
+          {view === "requests" && (request ? <><div className="dh-engineer-detail-head"><p><Icon name="inbox" />面談依頼 <span>/ {request.id}</span></p><h2>{request.project}</h2><span className={`dh-engineer-badge ${request.status === "requested" ? "is-waiting" : ""}`}>{requestStateLabel(request)}</span></div><section className="dh-engineer-section"><h3>面談 {request.round || 1}/{request.totalRounds || 1} の概要</h3><p className="dh-engineer-body">{request.summary}</p><CaseMetadata item={request} includeCompanies /><Facts rows={[["面談者", request.person], ["参画者", request.participantName || "未登録"], ["参画者(ひらがな)", request.participantNameKana || "未登録"], ["担当営業", data?.projects.find(project => project.id === request.projectId)?.salesName || "未設定"]]} /></section><AttachmentSection request={request} showEmpty /><section className="dh-engineer-section"><EngineerAvailability key={responseDraftKey(request)} request={request} pending={pending} drafts={responseDrafts.current} slotLabel={slotLabel} onSave={(path, payload) => { setSelectedRequest(request.id); return save(path, payload); }} />{request.status === "confirmed" && <button type="button" className="dh-engineer-primary" onClick={() => { const linked = events.find(item => !item.entry && item.requestId === request.id && (item.round || 1) === (request.round || 1)); if (linked) openEvent(linked); }}>最新の面談案内を見る<Icon name="arrow" /></button>}</section>{back}</> : <Empty title="依頼を選択してください" />)}
+          {view === "feedback" && (feedbackEvent ? <><div className="dh-engineer-detail-head"><p><Icon name="pen" />面談の振り返り <span>/ {feedbackEvent.key}</span></p><h2>{feedbackEvent.project}</h2><p className="dh-engineer-feedback-date">{dateLabel(feedbackEvent.stamp)} {feedbackEvent.time}・{feedbackEvent.route}</p></div>{(submittedFeedback || feedbackEvent.engineerConfirmedAt || feedbackEvent.shareFeedback) && <section className="dh-engineer-section"><button type="button" className="dh-engineer-secondary" onClick={() => openEvent(feedbackEvent, { view: "feedback", eventId: feedbackEvent.key })}>{feedbackEvent.shareFeedback && feedbackEvent.clientFeedback ? "共有された先方評価・面談案内を見る" : "面談案内を見る"}<Icon name="arrow" /></button></section>}<section className="dh-engineer-section">{submittedFeedback ? <SubmittedFeedback feedback={submittedFeedback} /> : <FeedbackForm key={feedbackEvent.key} event={feedbackEvent} pending={pending} drafts={feedbackDrafts.current} onSave={(path, payload) => { setSelectedFeedback(feedbackEvent.key); return save(path, payload); }} />}</section>{back}</> : <Empty title="面談を選択してください" />)}
         </aside>
       </div>}
       {data && <details className="dh-engineer-notifications"><summary><Icon name="inbox" />連絡・カレンダープレビュー <span>{notifications.length}件</span><Icon name="chevright" /></summary>{notifications.length ? <ul>{notifications.map(notification => <li key={notification.id}><button type="button" onClick={() => setPreview(notification)}><span>{notification.kind === "calendar" ? "カレンダー" : "Lark通知"}</span><strong>{notification.title}</strong><time>{dateTimeLabel(notification.createdAt)}</time><Icon name="chevright" /></button></li>)}</ul> : <p className="dh-engineer-small">新しい連絡が登録されると、ここから内容を確認できます。</p>}</details>}

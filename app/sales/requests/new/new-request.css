@@ -1,0 +1,105 @@
+.request-mast-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 62px;
+  max-width: 960px;
+  margin: 0 auto;
+  padding-inline: clamp(16px, 3vw, 32px);
+}
+.request-account { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.request-account span { padding-right: 10px; border-right: 1px solid #8394c3; }
+main.request-editor {
+  max-width: 960px;
+  margin-inline: auto;
+  padding: 24px clamp(16px, 3vw, 32px) 48px;
+}
+.sales-request-page-form, .request-load-error, .request-draft-list {
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  box-shadow: var(--ui-shadow);
+}
+.request-load-error { padding: 24px; }
+.request-load-error a + a { margin-inline-start: 16px; }
+.request-draft-list { margin-bottom: 14px; padding: 0 18px; }
+.request-draft-list summary { padding: 12px 0; cursor: pointer; font-weight: 650; color: var(--navy); }
+.request-draft-list summary span { margin-left: 10px; font-weight: 400; color: var(--ui-muted); font-size: 13px; }
+.request-draft-list > p { padding-bottom: 14px; font-size: 14px; }
+.request-draft-list ul { list-style: none; margin: 0; padding: 0; }
+.request-draft-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; padding: 12px 0; border-top: 1px solid var(--ui-border); }
+.draft-identification { display: grid; gap: 2px; flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.draft-identification time, .request-draft-list li > span { color: var(--ui-muted); font-size: 12px; }
+.draft-actions, .request-draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.draft-actions :is(a, button) { color: var(--blue); padding: 8px; text-decoration: underline; font-weight: 600; }
+.sales-request-page-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 6px;
+  background: var(--ui-surface);
+}
+.sales-request-page-form :is(input, textarea, select, .d-title) { scroll-margin-top: 72px; }
+.sales-request-page-form #detail-body { padding: clamp(18px, 4vw, 36px); }
+.sales-request-page-form .d-title { font-size: clamp(23px, 3vw, 30px); }
+.sales-request-page-form textarea { resize: vertical; }
+.sales-request-page-form textarea[name="summary"] { min-height: 9em; }
+.sales-request-page-form .d-fields :is(fieldset, label, select, textarea) { min-width: 0; }
+
+.request-assignment-intro {
+  margin-bottom: 14px;
+  color: var(--ui-muted);
+  font-size: 14px;
+}
+.request-assignment-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.request-assignment-options button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 16px;
+  border: 1px solid #b7c6db;
+  border-radius: 7px;
+  background: var(--ui-surface);
+  color: var(--navy);
+  text-align: start;
+}
+.request-assignment-options button:hover {
+  border-color: var(--blue);
+  background: var(--ui-selected);
+}
+.request-assignment-options :is(strong, span) { grid-column: 1; }
+.request-assignment-options strong { font-size: 16px; }
+.request-assignment-options span { color: var(--ui-muted); font-size: 13px; }
+.request-assignment-options .icon { grid-column: 2; grid-row: 1 / 3; color: var(--blue); }
+.request-assignment-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  margin-bottom: 16px;
+  padding: 0 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  background: var(--ui-selected);
+  color: var(--navy);
+  font-size: 13px;
+}
+.request-assignment-current button { min-height: 44px; }
+
+@media (max-width: 650px) {
+  .request-mast-inner { min-height: 52px; }
+  .request-mast-inner .logo { margin: 0; }
+  main.request-editor { padding: 12px 10px 28px; }
+  .sales-request-page-form #detail-body { padding: 16px 12px; }
+  .request-assignment-options { grid-template-columns: minmax(0, 1fr); }
+}

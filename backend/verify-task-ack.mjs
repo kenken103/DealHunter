@@ -35,7 +35,7 @@ const load = async () => JSON.parse(await readFile(statePath, "utf8"));
 
 function sql(statement, variables = {}) {
   const psql = process.env.DEALHUNTER_POSTGRES_BIN ? path.join(process.env.DEALHUNTER_POSTGRES_BIN, "psql.exe") : "psql.exe";
-  const args = ["-X", "-qAt", "-h", "127.0.0.1", "-p", "55432", "-U", "dealhunter", "-d", "dealhunter", "-v", "ON_ERROR_STOP=1"];
+  const args = ["-X", "-qAt", "-h", "127.0.0.1", "-p", "15432", "-U", "dealhunter", "-d", "dealhunter", "-v", "ON_ERROR_STOP=1"];
   for (const [name, value] of Object.entries(variables)) args.push("-v", `${name}=${value}`);
   args.push("-f", "-");
   const result = spawnSync(psql, args, { cwd: root, input: statement, encoding: "utf8", timeout: 15_000, windowsHide: true, env: { ...process.env, PGPASSWORD: databasePassword, PGCLIENTENCODING: "UTF8" } });
@@ -266,7 +266,7 @@ assert.equal(task.projectId, state.projectId);
 assert.equal(task.unread, true, "New student response must be unread");
 assert.equal(task.acknowledgedAt, null);
 assert.equal(taskFor(await dashboard(sales), state.taskKey).unread, true, "Reading dashboard must not acknowledge the task");
-assert(!(await dashboard(state.otherSalesId)).tasks.some(item => item.key === state.taskKey), "Another sales user can see an unowned task");
+assert.deepEqual(taskFor(await dashboard(state.otherSalesId), state.taskKey), task, "Sales users must see the same task state");
 await acknowledge(student, state.taskKey, task.revision, 403, { "X-DealHunter-Role": "sales" });
 await acknowledge(state.otherSalesId, state.taskKey, task.revision, 403);
 await acknowledge(sales, `request-R-${randomUUID()}`, 1, 404);
@@ -276,6 +276,7 @@ await acknowledge(sales, state.taskKey, task.revision);
 const acknowledged = taskFor(await dashboard(sales), state.taskKey);
 assert.equal(acknowledged.unread, false);
 assert(acknowledged.acknowledgedAt);
+assert.deepEqual(taskFor(await dashboard(state.otherSalesId), state.taskKey), acknowledged, "Shared task must reflect the owner's acknowledgement");
 await acknowledge(sales, state.taskKey, task.revision);
 data = await dashboard(sales);
 assert.equal(taskFor(data, state.taskKey).acknowledgedAt, acknowledged.acknowledgedAt, "Repeated acknowledgement changed its original timestamp");

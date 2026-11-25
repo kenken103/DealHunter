@@ -1,0 +1,5 @@
+.end-company-field{display:grid;gap:5px;min-width:0;align-content:start}
+.end-company-field label{font-size:12px;font-weight:600;color:#52647e}
+.end-company-field input,.end-company-field select{min-width:0;max-width:100%}
+.end-company-help{margin:0;font-size:11px;font-weight:400;line-height:1.65;color:#52647e;overflow-wrap:anywhere}
+.end-company-help button{font:inherit;text-decoration:underline;min-height:30px;padding:2px 5px;color:#2447aa}

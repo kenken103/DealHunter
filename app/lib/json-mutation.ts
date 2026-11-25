@@ -4,7 +4,7 @@ import { NextResponse } from "next/server";
 
 export const accountJson = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 
-export async function readAccountMutation(request: Request): Promise<{ body: Record<string, unknown>; error?: never } | { error: NextResponse; body?: never }> {
+export async function readAccountMutation(request: Request, maxLength = 8192): Promise<{ body: Record<string, unknown>; error?: never } | { error: NextResponse; body?: never }> {
   const origin = request.headers.get("origin");
   let sameOrigin = false;
   try {
@@ -15,7 +15,7 @@ export async function readAccountMutation(request: Request): Promise<{ body: Rec
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return { error: accountJson({ error: "JSON形式で送信してください。" }, 415) };
   try {
     const text = await request.text();
-    if (text.length > 8192) return { error: accountJson({ error: "入力内容が長すぎます。" }, 413) };
+    if (text.length > maxLength) return { error: accountJson({ error: "入力内容が長すぎます。" }, 413) };
     const body: unknown = JSON.parse(text);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Invalid body");
     return { body: body as Record<string, unknown> };

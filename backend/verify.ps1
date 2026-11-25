@@ -140,12 +140,12 @@ $pgCommand = Get-Command psql.exe -ErrorAction Stop
 $oldPassword = $env:PGPASSWORD
 try {
     $env:PGPASSWORD = [IO.File]::ReadAllText((Join-Path $root '.local/database.password')).Trim()
-    $cluster = & $pgCommand.Source -X -w -h 127.0.0.1 -p 55432 -U dealhunter -d dealhunter -v ON_ERROR_STOP=1 -tAc "SELECT current_setting('data_directory') || '|' || current_setting('port') || '|' || current_setting('TimeZone')"
+    $cluster = & $pgCommand.Source -X -w -h 127.0.0.1 -p 15432 -U dealhunter -d dealhunter -v ON_ERROR_STOP=1 -tAc "SELECT current_setting('data_directory') || '|' || current_setting('port') || '|' || current_setting('TimeZone')"
     Assert-Demo ($LASTEXITCODE -eq 0) 'Database query failed.'
     $parts = $cluster.Split('|')
     $expectedData = (Resolve-Path -LiteralPath (Join-Path $root '.local/postgres')).Path
     Assert-Demo ([IO.Path]::GetFullPath($parts[0]) -eq $expectedData) 'Unexpected PostgreSQL cluster: isolation failed.'
-    Assert-Demo ($parts[1] -eq '55432' -and $parts[2] -eq 'Asia/Tokyo') 'Unexpected database port or timezone.'
+    Assert-Demo ($parts[1] -eq '15432' -and $parts[2] -eq 'Asia/Tokyo') 'Unexpected database port or timezone.'
     $checkSql = @'
 SELECT jsonb_build_object(
  'users',(SELECT count(*) FROM app_users),
@@ -181,7 +181,7 @@ SELECT jsonb_build_object(
  (SELECT count(*) FROM task_acknowledgements a JOIN projects p ON p.id=a.project_id WHERE p.sales_id<>a.user_id)
 )::text;
 '@
-    $summaryJson = & $pgCommand.Source -X -w -h 127.0.0.1 -p 55432 -U dealhunter -d dealhunter -v ON_ERROR_STOP=1 -tAc $checkSql
+    $summaryJson = & $pgCommand.Source -X -w -h 127.0.0.1 -p 15432 -U dealhunter -d dealhunter -v ON_ERROR_STOP=1 -tAc $checkSql
     Assert-Demo ($LASTEXITCODE -eq 0) 'Database relation checks failed.'
     $summary = $summaryJson | ConvertFrom-Json
     Assert-Demo ($summary.invalid_relations -eq 0) 'Database contains invalid role/ownership/question/confirmed-slot relations.'

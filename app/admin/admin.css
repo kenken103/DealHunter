@@ -54,3 +54,15 @@ main.dh-admin-main{max-width:1460px;margin:0 auto;padding:36px clamp(20px,3vw,48
 @media(max-width:1000px){.dh-admin-layout{grid-template-columns:minmax(280px,.9fr) minmax(300px,1fr)}.dh-admin-filters{grid-template-columns:1fr}.dh-admin-header{padding:0 24px}.dh-admin-list-head,.dh-admin-editor-head{padding:20px}.dh-admin-account{padding:17px 20px}.dh-admin-editor-body{padding:22px}}
 @media(max-width:760px){.dh-admin-layout{grid-template-columns:1fr}.dh-admin-header{padding:12px 18px;align-items:flex-start;gap:15px}.dh-admin-brand{font-size:24px;margin-top:3px}.dh-admin-brand img{width:30px;height:30px}.dh-admin-user{gap:8px;flex-wrap:wrap;justify-content:flex-end;max-width:180px;font-size:11px}.dh-admin-user button{padding:4px 8px;font-size:11px}.dh-admin-user>span:first-child{display:none}main.dh-admin-main{padding:25px 16px 35px}.dh-admin-heading h1{font-size:25px}.dh-admin-heading p{font-size:12px}.dh-admin-heading{gap:12px}.dh-admin-heading>.dh-admin-button{flex:none;padding:7px 12px}.dh-admin-summary{gap:13px}.dh-admin-summary strong{font-size:18px}.dh-admin-filters{grid-template-columns:minmax(0,1fr) 125px}.dh-admin-field input,.dh-admin-field select{font-size:16px}.dh-admin-user-list{max-height:380px}.dh-admin-account{padding:16px 20px}.dh-admin-editor-body{padding:20px}.dh-admin-actions .dh-admin-button{flex:1}.dh-admin-review{padding:15px}}
 @media(prefers-reduced-motion:no-preference){.dh-admin-button,.dh-admin-account{transition:background-color .12s}}
+.dh-admin-tabs{display:flex;gap:8px;margin:0 0 26px;border-bottom:1px solid #dce3ef;padding-bottom:10px}
+.dh-admin-tabs button{min-height:44px;padding:8px 18px;border-radius:5px;color:#526781;font-weight:650;cursor:pointer}
+.dh-admin-tabs button[aria-pressed=true]{color:#17369a;background:#e7edfc;box-shadow:inset 0 -3px #2447aa}
+.dh-admin-field textarea{width:100%;min-width:0;resize:vertical;min-height:85px;border:1px solid #becbde;padding:10px 11px;border-radius:4px;background:#fff;color:#2e4566;font:inherit;line-height:1.7}
+.dh-admin-shell textarea:focus-visible{outline:3px solid #668be4;outline-offset:3px}
+.dh-project-list .dh-admin-list-head>.dh-admin-field{margin-top:16px}
+.dh-admin-back{display:none}.dh-admin-history{border-top:1px solid #e0e7f2;padding-top:18px;font-size:13px;color:#536984}
+.dh-admin-history summary{cursor:pointer;min-height:44px;font-weight:650}
+.dh-admin-history ol{padding-left:20px;display:grid;gap:15px}.dh-admin-history li>span{display:block;font-size:12px;margin-top:3px}
+.dh-admin-review dd{white-space:pre-wrap}
+.dh-admin-discard{margin-bottom:20px}.dh-admin-discard>.dh-admin-actions{margin-top:15px}
+@media(max-width:760px){.dh-admin-tabs{gap:4px;margin-bottom:22px}.dh-admin-tabs button{flex:1;padding:8px}.dh-admin-field textarea{font-size:16px}.dh-admin-projects:not(.is-detail) .dh-project-editor{display:none}.dh-admin-projects.is-detail .dh-project-list{display:none}.dh-admin-back{display:block;min-height:44px;color:#2447aa;font-size:13px;margin-bottom:8px;cursor:pointer}.dh-admin-projects .dh-admin-user-list{max-height:none}}

@@ -7,7 +7,7 @@ const pg=process.env.DEALHUNTER_POSTGRES_BIN?`${process.env.DEALHUNTER_POSTGRES_
 const tables=["app_users","projects","scheduled_events","interview_questions","pending_tasks","interview_requests","candidate_slots","request_attachments","project_attachments","interview_feedback","notification_previews","task_acknowledgements"];
 const fixtures=[];
 function sql(statement,variables={}) {
- const args=["-X","-qAt","-h","127.0.0.1","-p","55432","-U","dealhunter","-d","dealhunter","-v","ON_ERROR_STOP=1"];
+ const args=["-X","-qAt","-h","127.0.0.1","-p","15432","-U","dealhunter","-d","dealhunter","-v","ON_ERROR_STOP=1"];
  for(const [k,v] of Object.entries(variables)) args.push("-v",`${k}=${v}`);
  args.push("-f","-");
  const r=spawnSync(pg,args,{input:statement,encoding:"utf8",timeout:20000,windowsHide:true,env:{...process.env,PGPASSWORD:password,PGCLIENTENCODING:"UTF8"}});

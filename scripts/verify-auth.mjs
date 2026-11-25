@@ -158,10 +158,11 @@ try {
   const engineerTarget = "/engineer?event=DH-1027";
   // Return-path syntax can be tested without creating any case data.
   const salesTarget = `/sales?${new URLSearchParams({ request: salesData.requests[0]?.id ?? "R-RETURN-PATH-CHECK" })}`;
+  const createTarget = "/sales/requests/new";
   const leaderTarget = "/leader?project=DH-RETURN-PATH-CHECK";
-  for (const target of [engineerTarget, salesTarget, leaderTarget]) {
+  for (const target of [engineerTarget, salesTarget, leaderTarget, createTarget]) {
     const anonymousLink = await expectRedirect(target, "/login");
-    assert.equal(location(anonymousLink).searchParams.get("next"), target, "Anonymous notification link must survive the login redirect");
+    assert.equal(location(anonymousLink).searchParams.get("next"), target, "Requested page must survive the login redirect");
   }
   const invalidDeepLink = await login("engineer.takahashi@dealhunter.example", "wrong-password", engineerTarget);
   assert.equal(invalidDeepLink.status, 303);
@@ -172,6 +173,8 @@ try {
   for (const [email, password, next, expected] of [
     ["engineer.takahashi@dealhunter.example", "demo-engineer", engineerTarget, engineerTarget],
     ["sales.aoki@dealhunter.example", "demo-sales", salesTarget, salesTarget],
+    ["sales.aoki@dealhunter.example", "demo-sales", createTarget + "?ignored=discard#fragment", createTarget],
+    ["sales.aoki@dealhunter.example", "demo-sales", createTarget + "?draft=D-one&ignored=1", createTarget + "?draft=D-one"],
     ["engineer.takahashi@dealhunter.example", "demo-engineer", "/engineer?event=DH-1027&ignored=discard#fragment", engineerTarget],
     ["sales.aoki@dealhunter.example", "demo-sales", "https://untrusted.example/sales?request=R-DEMO", "/sales"],
     ["engineer.takahashi@dealhunter.example", "demo-engineer", "//untrusted.example/engineer", "/engineer"],
@@ -186,7 +189,7 @@ try {
     const linkedLogin = await login(email, password, next);
     assert.equal(linkedLogin.status, 303, "Return-path login must succeed");
     assert.equal(location(linkedLogin).origin, origin, "Login return path must remain on this application");
-    assert.equal(location(linkedLogin).pathname + location(linkedLogin).search, expected, "Login must retain only a valid, same-role notification destination");
+    assert.equal(location(linkedLogin).pathname + location(linkedLogin).search, expected, "Login must retain only an allowed destination for this role");
     assert.equal(location(linkedLogin).hash, "", "Login return path must discard fragments");
   }
 
@@ -197,6 +200,7 @@ try {
   await expectRedirect("/", "/engineer", engineer);
   await expectRedirect("/login", "/engineer", engineer);
   await expectRedirect("/sales", "/engineer", engineer);
+  await expectRedirect(createTarget, "/engineer", engineer);
   await expectRedirect("/leader", "/engineer", engineer);
   assert.equal((await request("/engineer", { headers: { Cookie: engineer } })).status, 200);
   const ownDashboard = await request("/api/dashboard", { headers: { Cookie: engineer } });
@@ -256,6 +260,7 @@ try {
     const leaderCookie = sessionCookie(leaderLogin);
     await expectRedirect("/", "/leader", leaderCookie);
     await expectRedirect("/sales", "/leader", leaderCookie);
+    await expectRedirect(createTarget, "/leader", leaderCookie);
     await expectRedirect("/engineer", "/leader", leaderCookie);
     assert.equal((await request("/leader", { headers: { Cookie: leaderCookie } })).status, 200);
     const leaderResponse = await request("/api/dashboard", { headers: { Cookie: leaderCookie } });

@@ -1,0 +1,29 @@
+.shared-interview-slots { margin: .75rem 0; padding: .85rem 1rem; border: 1px solid #cedbd4; border-radius: .55rem; background: #fff; color: #253c33; }
+.shared-interview-slots h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.shared-interview-slots p, .shared-interview-slots ul { margin: .45rem 0; font-size: .88rem; }
+.shared-interview-slots ul { padding-left: 1.2rem; }
+.shared-interview-slots li { margin: .3rem 0; }
+.shared-interview-slots fieldset, .shared-slot-actions { display: flex; align-items: flex-end; flex-wrap: wrap; gap: .45rem; }
+.shared-slot-actions { display: inline-flex; margin-left: .5rem; }
+.shared-interview-slots fieldset { margin: .65rem 0 0; padding: .55rem 0; border: 0; min-width: 0; }
+.shared-interview-slots label { display: grid; gap: .2rem; font-size: .85rem; }
+.shared-interview-slots input, .shared-interview-slots button { font: inherit; padding: .35rem .5rem; border: 1px solid #a5b8ad; border-radius: .35rem; background: white; color: inherit; }
+.shared-interview-slots button { cursor: pointer; }
+.shared-interview-slots [role="alert"] { color: #8c2727; }
+.shared-interview-slots .lark-interviewer-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+}
+.lark-interviewer-choices label {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 44px;
+  padding: .35rem .6rem;
+  border: 1px solid #cedbd4;
+  border-radius: .35rem;
+  cursor: pointer;
+}
+.lark-interviewer-choices label:has(:checked) { background: #eef5ff; border-color: #6387c0; }
+.lark-interviewer-choices input[type="checkbox"] { flex: 0 0 auto; width: 1rem; height: 1rem; }
+.lark-interviewer-choices span { overflow-wrap: anywhere; }

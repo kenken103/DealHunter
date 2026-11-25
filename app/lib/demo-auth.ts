@@ -1,11 +1,12 @@
 import "server-only";
 
-import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { link, open, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { accountBackend } from "./account-backend";
+import { isLocalDemoRequest } from "./local-demo";
 import type { UserRole } from "../types";
 
 export type DemoUser = { id: string; name: string; role: UserRole };
@@ -16,16 +17,37 @@ const MAX_AGE = 8 * 60 * 60;
 const ISSUER = "dealhunter-local";
 const AUDIENCE = "dealhunter-demo";
 
-async function signingKey() {
-  const directory = path.join(process.cwd(), ".local");
-  const filename = path.join(directory, "demo-auth.key");
-  await mkdir(directory, { recursive: true });
+// Backend startup creates .local. Passing the directory itself to the Next
+// bundler would also track the running PostgreSQL database inside it.
+const sessionKeyFile = path.join(process.cwd(), ".local", "demo-auth.key");
+
+async function createSigningKey() {
+  // Publish only a complete key. Another startup can win without overwriting it.
+  const temporary = sessionKeyFile + "." + randomUUID() + ".tmp";
+  const key = randomBytes(32);
+  const file = await open(temporary, "wx", 0o600);
   try {
-    await writeFile(filename, randomBytes(32), { flag: "wx", mode: 0o600 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    try { await file.writeFile(key); } finally { await file.close(); }
+    try {
+      await link(temporary, sessionKeyFile);
+      return key;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      return await readFile(sessionKeyFile);
+    }
+  } finally {
+    await unlink(temporary);
   }
-  const key = await readFile(filename);
+}
+
+async function signingKey() {
+  let key: Buffer;
+  try {
+    key = await readFile(sessionKeyFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    key = await createSigningKey();
+  }
   if (key.length !== 32) throw new Error("Invalid local demo session key");
   return key;
 }
@@ -37,6 +59,7 @@ function isUser(value: unknown): value is DemoUser {
 }
 
 export async function authenticateDemoUser(email: string, password: string): Promise<DemoUser | null> {
+  if (email.trim().toLowerCase().endsWith("@dealhunter.example") && !(await isLocalDemoRequest())) return null;
   const result = await accountBackend<{ user?: unknown }>("auth/login", { email, password });
   if (result.status === 429) throw new LoginRateLimitError();
   if (result.status === 401 || result.status === 400) return null;

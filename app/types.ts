@@ -1,5 +1,8 @@
 export type UserRole = "sales" | "student" | "leader" | "admin";
-export type ScheduleEvent = {
+export type ScheduleState = "scheduled" | "postponed" | "cancelled";
+export type ScheduleChange = { revision: number; state: ScheduleState; at: string; start: string; end?: string | null; prepStart?: string | null; reason: string };
+export type ProjectMetadata = { primeCompany: string; category: string; remarks: string; executorName: string; followerNames: string[] };
+export type ScheduleEvent = ProjectMetadata & {
   key: string;
   date: number;
   time: string;
@@ -17,9 +20,24 @@ export type ScheduleEvent = {
   requestId?: string | null;
   parentEventId?: string | null;
   url: string;
+  scheduleState: ScheduleState;
+  noticeRevision: number;
+  noticeReadAt: string | null;
+  prepStart: string | null;
+  prepUrl: string;
+  meetingId: string;
+  passcode: string;
+  instructions: string;
+  emergencyContact: string;
+  clientFeedback: string;
+  shareFeedback: boolean;
+  changeReason: string;
+  changes: ScheduleChange[];
   guidance: string;
   status: "scheduled" | "feedback-submitted" | "entry-registered";
-  result: "pending" | "passed" | "rejected";
+  result: "pending" | "passed" | "rejected" | "advanced" | "offered" | "declined";
+  round: number;
+  totalRounds: number;
   engineerConfirmedAt: string | null;
   leaderId: string | null;
   leaderName: string | null;
@@ -30,15 +48,29 @@ export type ScheduleEvent = {
 };
 
 export type Question = { key: string; project: string; title: string; tag: string; context: string; eventId?: string | null };
-export type Task = { key: string; projectId: string; project: string; person: string; owner: string; title: string; body: string; action: "schedule" | "entry" | "feedback" | "assign"; requestId?: string | null; eventId?: string | null; recruitmentId?: string | null; revision: number; unread: boolean; acknowledgedAt: string | null };
+export type Task = { key: string; projectId: string; project: string; person: string; owner: string; title: string; body: string; action: "schedule" | "entry" | "feedback" | "assign" | "notice"; requestId?: string | null; eventId?: string | null; recruitmentId?: string | null; revision: number; unread: boolean; acknowledgedAt: string | null };
 export type Student = { id: string; name: string };
-export type CandidateSlot = { id: string; start: string; end: string | null };
-export type InterviewRequest = { id: string; projectId: string; project: string; summary: string; upperCompany: string; endCompany: string; studentId: string; person: string; status: "requested" | "responded" | "confirmed"; scheduleMode: "candidates" | "availability"; requestedDates: string[]; candidates: CandidateSlot[]; availableSlotIds: string[]; confirmedSlotId?: string | null; leaderId: string | null; leaderName: string | null; participantName: string; participantNameKana: string; attachment: { name: string; size: number; scope: "project" | "request" } | null };
-export type Recruitment = { id: string; projectId: string; project: string; summary: string; upperCompany: string; endCompany: string; leaderId: string; leaderName: string; status: "pending" | "assigned"; scheduleMode: "candidates" | "availability"; requestedDates: string[]; candidates: CandidateSlot[]; studentIds: string[]; attachment: InterviewRequest["attachment"] };
-export type Project = { id: string; name: string; notes: string; upperCompany: string; endCompany: string; salesId: string; salesName: string; leaderId: string | null; leaderName: string | null; participantName: string; participantNameKana: string };
+export type CandidateSlot = { id: string; start: string; end: string | null; proposed?: boolean; openEnded?: boolean };
+export type AvailabilityResponse = "none" | "available" | "alternative" | "unavailable";
+export type InterviewRequest = ProjectMetadata & { taskRevision: number; createdAt: string; responseKind: AvailabilityResponse; responseNote: string; id: string; projectId: string; project: string; summary: string; upperCompany: string; endCompany: string; studentId: string; person: string; status: "requested" | "responded" | "confirmed"; round: number; totalRounds: number; scheduleMode: "candidates" | "availability"; requestedDates: string[]; candidates: CandidateSlot[]; availableSlotIds: string[]; confirmedSlotId?: string | null; leaderId: string | null; leaderName: string | null; participantName: string; participantNameKana: string; attachment: { name: string; size: number; scope: "project" | "request" } | null };
+export type Recruitment = ProjectMetadata & { id: string; projectId: string; project: string; summary: string; participantName: string; upperCompany: string; endCompany: string; leaderId: string; leaderName: string; status: "pending" | "assigned"; totalRounds: number; scheduleMode: "candidates" | "availability"; requestedDates: string[]; candidates: CandidateSlot[]; studentIds: string[]; attachment: InterviewRequest["attachment"] };
+export type Project = ProjectMetadata & { id: string; name: string; notes: string; upperCompany: string; endCompany: string; salesId: string; salesName: string; leaderId: string | null; leaderName: string | null; participantName: string; participantNameKana: string };
+export type ImportedCase = {
+  projectId: string;
+  studentId: string | null;
+  person: string | null;
+  sourceRow: number;
+  sourceNumber: string;
+  interviewDate: string | null;
+  entryDate: string | null;
+  entryDateText: string;
+  outcome: string;
+  status: "joined" | "rejected" | "declined" | "unknown";
+  primeContractor: string;
+};
 export type InterviewFeedback = { id: string; eventId: string; projectId: string; studentId: string; person: string; duties: string; process: string; remote: string; impression: string; questions: string[]; submittedAt: string };
 export type PreviewLine = { label: string; value: string };
 export type NotificationPreview = { title: string; lines: PreviewLine[]; body?: string };
 export type DemoNotification = NotificationPreview & { id: string; userId: string; createdAt: string; kind: "lark" | "calendar" };
-export type MutationResult = { message: string; projectId?: string; requestId?: string; requestIds?: string[]; recruitmentId?: string; eventId?: string; preview?: NotificationPreview; previews?: NotificationPreview[]; salesPreview?: NotificationPreview };
-export type DashboardData = { projects: Project[]; leaders: Student[]; events: ScheduleEvent[]; questions: Question[]; tasks: Task[]; students: Student[]; teamMembers: Student[]; recruitments: Recruitment[]; requests: InterviewRequest[]; feedbacks: InterviewFeedback[]; notifications: DemoNotification[]; currentUser: { id: string; name: string; role: UserRole } };
+export type MutationResult = { message: string; projectId?: string; requestId?: string; requestIds?: string[]; eventIds?: string[]; recruitmentId?: string; eventId?: string; preview?: NotificationPreview; previews?: NotificationPreview[]; salesPreview?: NotificationPreview };
+export type DashboardData = { projects: Project[]; importedCases: ImportedCase[]; leaders: Student[]; events: ScheduleEvent[]; questions: Question[]; tasks: Task[]; students: Student[]; teamMembers: Student[]; recruitments: Recruitment[]; requests: InterviewRequest[]; feedbacks: InterviewFeedback[]; notifications: DemoNotification[]; currentUser: { id: string; name: string; role: UserRole } };

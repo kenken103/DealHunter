@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { logout } from "../actions/auth";
 import type { DemoUser } from "../lib/demo-auth";
 import type { UserRole } from "../types";
+import AdminProjects from "./AdminProjects";
 
 type Account = { id: string; name: string; email: string | null; role: UserRole; leaderId: string | null; leaderName: string | null; isDemo: boolean };
 type AccountData = { users: Account[]; leaders: { id: string; name: string }[]; currentUser: DemoUser };
@@ -13,6 +14,8 @@ const roleLabels: Record<UserRole, string> = { student: "エンジニア", leade
 const roleOptions: UserRole[] = ["student", "leader", "sales", "admin"];
 
 export default function AdminDashboard({ user }: { user: DemoUser }) {
+  const [tab, setTab] = useState<"accounts" | "projects">("accounts");
+  const [projectsOpened, setProjectsOpened] = useState(false);
   const [data, setData] = useState<AccountData | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
@@ -110,9 +113,12 @@ export default function AdminDashboard({ user }: { user: DemoUser }) {
   }
 
   return <div className="dh-admin-shell">
-    <a className="dh-admin-skip" href="#dh-admin-title">本文へ移動</a>
-    <header className="dh-admin-header"><Link href="/admin" className="dh-admin-brand" aria-label="DealHunter アカウント管理"><img src="/logo.svg" width="38" height="38" alt="" /><span>DealHunter</span></Link><div className="dh-admin-user"><span>管理者</span><strong>{user.name}</strong><form action={logout}><button type="submit">ログアウト</button></form></div></header>
+    <a className="dh-admin-skip" href={tab === "projects" ? "#dh-projects-title" : "#dh-admin-title"}>本文へ移動</a>
+    <header className="dh-admin-header"><Link href="/admin" className="dh-admin-brand" aria-label="DealHunter 管理画面"><img src="/logo.svg" width="38" height="38" alt="" /><span>DealHunter</span></Link><div className="dh-admin-user"><span>管理者</span><strong>{user.name}</strong><form action={logout}><button type="submit">ログアウト</button></form></div></header>
     <main className="dh-admin-main">
+      <nav className="dh-admin-tabs" aria-label="管理メニュー"><button type="button" aria-pressed={tab === "accounts"} onClick={() => setTab("accounts")}>アカウント管理</button><button type="button" aria-pressed={tab === "projects"} onClick={() => { setProjectsOpened(true); setTab("projects"); }}>案件管理</button></nav>
+      {projectsOpened && <div hidden={tab !== "projects"}><AdminProjects /></div>}
+      {tab === "accounts" && <>
       <p className="dh-admin-eyebrow">管理者デスク / 利用者の管理</p>
       <div className="dh-admin-heading"><div><h1 id="dh-admin-title">アカウント管理</h1><p>異動や役割の変更に合わせて、利用者の役割と所属リーダーを編集できます。</p></div><button className="dh-admin-button" type="button" disabled={loading || pending} onClick={() => { setNotice(""); void refresh(); }}>{loading ? "更新中…" : "更新"}</button></div>
       {error && <p className="dh-admin-error" ref={errorRef} tabIndex={-1} role="alert">{error}</p>}
@@ -133,6 +139,7 @@ export default function AdminDashboard({ user }: { user: DemoUser }) {
           </form> : <p className="dh-admin-empty">一覧からアカウントを選ぶと、役割と所属を編集できます。</p>}
         </section>
       </div>
+      </>}
     </main>
   </div>;
 }

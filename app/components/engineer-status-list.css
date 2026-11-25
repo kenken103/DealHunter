@@ -1,0 +1,154 @@
+.engineer-status {
+  min-width: 0;
+  background: var(--ui-surface);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  box-shadow: var(--ui-shadow);
+  overflow: clip;
+}
+.engineer-status-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 20px;
+  padding: 16px 20px;
+}
+.engineer-status-toolbar label {
+  display: grid;
+  gap: 5px;
+  width: min(100%, 360px);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-muted);
+}
+.engineer-status-toolbar input {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid #b9c6d7;
+  border-radius: 6px;
+  color: var(--ink);
+  background: white;
+  font-size: 14px;
+  font-weight: 400;
+}
+.engineer-status-count {
+  margin: 0;
+  align-self: flex-end;
+  padding-block: 9px;
+  color: var(--ui-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.engineer-status-count b { color: var(--navy); margin-inline: 3px; }
+.engineer-status-count span { margin-inline-start: 12px; }
+.engineer-status-action {
+  min-height: 42px;
+  padding: 8px 15px;
+  border: 1px solid #c1cddd;
+  border-radius: 6px;
+  background: white;
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 600;
+}
+.engineer-status-toolbar .engineer-status-action { margin-inline-start: auto; }
+.engineer-status-action:hover { background: var(--ui-selected); }
+.engineer-status-action:disabled { opacity: .55; cursor: wait; }
+.engineer-status-message { padding: 22px 20px; border-top: 1px solid var(--ui-border); color: var(--ui-muted); }
+.engineer-status-message[role="alert"] { color: #91392e; }
+.engineer-status-table-wrap { overflow-x: auto; }
+.engineer-status-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: start;
+  font-size: 14px;
+}
+.engineer-status-name-col, .engineer-status-participant-col { width: 13%; }
+.engineer-status-company-col { width: 23%; }
+.engineer-status-date-col { width: 12%; }
+.engineer-status-table :is(th, td) {
+  padding: 10px clamp(10px, 2vw, 20px);
+  border-top: 1px solid var(--ui-border);
+  line-height: 1.55;
+  vertical-align: middle;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+.engineer-status-table thead th { background: #f2f5fa; color: #435773; font-size: 12px; }
+.engineer-status-table tbody th {
+  vertical-align: top;
+  white-space: nowrap;
+  color: var(--navy);
+  font-weight: 600;
+}
+.engineer-status-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.engineer-status-table tbody:nth-of-type(even) { background: #fafbfd; }
+.engineer-status-table .engineer-status-active-row { position: relative; }
+.engineer-status-active-row:is(:hover, :focus-within) { background: var(--ui-selected); }
+.engineer-status-project {
+  display: inline-flex;
+  max-width: 100%;
+  gap: 5px;
+  align-items: center;
+  padding: 0;
+  color: var(--blue);
+  text-align: start;
+  font-weight: 600;
+}
+/* The project button gives the entire table row the same target and focus order. */
+.engineer-status-project::after { position: absolute; inset: 0; content: ""; }
+.engineer-status-name-link {
+  position: relative;
+  z-index: 1;
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+.engineer-status-name-link:hover { text-decoration-thickness: 2px; }
+@media (pointer: coarse) {
+  .engineer-status-name-link { display: inline-flex; min-height: 44px; align-items: center; }
+}
+.engineer-status-project span {
+  min-width: 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.engineer-status-project .icon { flex: none; width: 14px; height: 14px; }
+.engineer-status-unassigned { color: var(--ui-muted); }
+.engineer-status :is(button, input, a):focus-visible,
+.engineer-status-dialog button:focus-visible { outline: 2px solid #305ccb; outline-offset: 2px; }
+.engineer-status-dialog { max-width: calc(100vw - 20px); }
+.engineer-status-dialog-bar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ui-border);
+  background: white;
+  color: var(--ui-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.engineer-status-dialog-body { padding: 16px 22px 24px; overflow-wrap: anywhere; }
+.engineer-status-dialog-body h3 { margin: 16px 0 6px; font-size: 15px; color: var(--navy); }
+.engineer-status-dialog-body p { white-space: pre-wrap; line-height: 1.8; }
+@media (max-width: 650px) {
+  .engineer-status-toolbar { padding: 12px; gap: 4px 10px; }
+  .engineer-status-toolbar label { width: 100%; }
+  .engineer-status-toolbar input { font-size: 16px; }
+  .engineer-status-action { min-height: 44px; }
+  .engineer-status-table { font-size: 13px; }
+  .engineer-status-table :is(th, td) { height: 44px; padding: 8px 4px; }
+  .engineer-status-name-col, .engineer-status-date-col { width: 1%; }
+  .engineer-status-participant-col { width: 5.75em; }
+  .engineer-status-company-col { width: 19%; }
+  .engineer-status-table thead th { white-space: nowrap; }
+  .engineer-status-date { font-size: 12px; }
+  .engineer-status-project { gap: 2px; }
+  .engineer-status-dialog-bar { padding-inline: 14px; }
+  .engineer-status-dialog-body { padding: 12px 16px 20px; }
+}

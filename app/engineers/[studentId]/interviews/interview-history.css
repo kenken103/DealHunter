@@ -1,0 +1,140 @@
+.engineer-history-mast {
+  display: flex;
+  align-items: center;
+  max-width: 1232px;
+  min-height: 62px;
+  margin-inline: auto;
+  padding-inline: clamp(16px, 4vw, 36px);
+}
+
+.engineer-history {
+  max-width: 1232px;
+  margin-inline: auto;
+  padding: 20px clamp(16px, 4vw, 36px) 48px;
+}
+
+.engineer-history-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  color: var(--blue);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.engineer-history-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  margin-block: 8px 22px;
+}
+
+.engineer-history-heading h1 {
+  margin: 0;
+  color: var(--navy);
+  font-size: clamp(22px, 4.4vw, 30px);
+  overflow-wrap: anywhere;
+}
+
+.engineer-history-heading p { margin: 0; color: var(--ui-muted); font-size: 14px; }
+
+.engineer-history-list,
+.engineer-history-message {
+  margin: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow);
+}
+
+.engineer-history-message { padding: 24px; color: var(--ui-muted); }
+.engineer-history-message p { margin: 0 0 6px; }
+.engineer-history-list { list-style: none; padding: 0; }
+
+.engineer-history-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) minmax(80px, max-content);
+  grid-template-areas: "date project result";
+  align-items: start;
+  gap: 12px 22px;
+  padding: 18px clamp(14px, 3vw, 24px);
+}
+
+.engineer-history-row + .engineer-history-row { border-top: 1px solid var(--ui-border); }
+
+.engineer-history-date { grid-area: date; color: var(--ui-muted); font-size: 14px; }
+.engineer-history-date time { color: var(--navy); font-weight: 600; font-variant-numeric: tabular-nums; }
+.engineer-history-date time span { margin-inline-start: 8px; }
+.engineer-history-date small { display: block; margin-top: 4px; }
+
+.engineer-history-project { grid-area: project; min-width: 0; overflow-wrap: anywhere; }
+.engineer-history-project h2 { margin: 0; color: var(--navy); font-size: 16px; white-space: pre-line; }
+
+.engineer-history-companies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.engineer-history-companies > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.engineer-history-companies dt { flex: none; color: var(--ui-muted); }
+.engineer-history-companies dd { margin: 0; min-width: 0; }
+
+:is(.engineer-history-notes, .engineer-history-record) { margin-top: 8px; font-size: 13px; }
+.engineer-history-notes + .engineer-history-record { margin-top: 0; }
+:is(.engineer-history-notes, .engineer-history-record) summary {
+  width: fit-content;
+  padding-block: 5px;
+  color: var(--blue);
+  cursor: pointer;
+  font-weight: 600;
+}
+.engineer-history-notes p { margin: 4px 0 0; color: var(--ui-muted); line-height: 1.65; white-space: pre-wrap; }
+
+.engineer-history-record-content {
+  margin-block: 4px 0;
+  padding: 10px 12px;
+  border-inline-start: 2px solid var(--ui-border);
+  background: #f8fafc;
+  line-height: 1.65;
+}
+.engineer-history-record-content h3 { margin: 0; color: var(--navy); font-size: 13px; }
+.engineer-history-record-content h3:not(:first-child) { margin-top: 12px; }
+.engineer-history-record-content p { margin: 4px 0 0; color: var(--ui-muted); }
+.engineer-history-record-content ol { margin: 4px 0 0; padding-inline-start: 1.5em; }
+.engineer-history-record-content li + li { margin-top: 3px; }
+.engineer-history-record-content li,
+.engineer-history-feedback-fields dd { white-space: pre-wrap; }
+.engineer-history-feedback-fields { display: grid; gap: 8px; margin: 4px 0 0; }
+.engineer-history-feedback-fields dt { color: var(--ui-muted); font-weight: 600; }
+.engineer-history-feedback-fields dd { margin: 0; }
+
+.engineer-history-result {
+  grid-area: result;
+  justify-self: end;
+  max-width: 14ch;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: #eef2f7;
+  color: #435773;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.engineer-history-result:is([data-result="passed"], [data-result="joined"], [data-result="offered"]) { background: #e8f4ec; color: #1c623d; }
+.engineer-history-result:is([data-result="rejected"], [data-result="declined"]) { background: #faeded; color: #8e3838; }
+.engineer-history-result[data-result="advanced"] { background: var(--ui-selected); color: var(--blue); }
+.engineer-history :is(a, summary):focus-visible { outline: 2px solid #305ccb; outline-offset: 3px; }
+
+@media (max-width: 700px) {
+  .engineer-history-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "date result" "project project";
+    gap: 8px 12px;
+  }
+  .engineer-history-companies { display: grid; }
+}

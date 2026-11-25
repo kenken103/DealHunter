@@ -110,7 +110,7 @@ COMMIT;
   // psql's Windows argv conversion can use the active codepage; pass the
   // Japanese name as ASCII hex and decode it explicitly as UTF-8 in SQL.
   const nameHex = Buffer.from(state.project, "utf8").toString("hex");
-  const result = spawnSync(psql, ["-X", "-h", "127.0.0.1", "-p", "55432", "-U", "dealhunter", "-d", "dealhunter", "-v", "ON_ERROR_STOP=1", "-v", `fixture_project=${projectId}`, "-v", `fixture_name_hex=${nameHex}`, "-v", `fixture_request=${state.requestId}`, "-f", "-"], {
+  const result = spawnSync(psql, ["-X", "-h", "127.0.0.1", "-p", "15432", "-U", "dealhunter", "-d", "dealhunter", "-v", "ON_ERROR_STOP=1", "-v", `fixture_project=${projectId}`, "-v", `fixture_name_hex=${nameHex}`, "-v", `fixture_request=${state.requestId}`, "-f", "-"], {
     cwd: root,
     input: sql,
     encoding: "utf8",

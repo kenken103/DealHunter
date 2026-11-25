@@ -2,6 +2,7 @@ node_modules/
 .next/
 .local/
 *.tsbuildinfo
+*.dump
 .env
 .env.*
 !.env.example

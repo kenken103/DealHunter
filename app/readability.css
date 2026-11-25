@@ -113,34 +113,34 @@ dialog::backdrop { background: rgb(24 39 62 / 35%); }
 dialog .dialog-chrome { position: sticky; top: 0; z-index: 3; padding: 12px 20px; background: #fff; border-color: var(--ui-border); }
 dialog .dialog-chrome button { width: 36px; height: 36px; border-radius: 6px; }
 dialog .dialog-chrome button:hover { background: #f1f4f8; }
-dialog #detail-body { padding: 24px; }
-dialog .d-kicker { font-size: 12px; }
-dialog .d-title { font-size: 24px; margin: 6px 0 22px; }
-dialog .d-list { border-top: 0; }
-dialog .d-row { grid-template-columns: 124px minmax(0, 1fr); gap: 16px; padding: 13px 0; border-color: #e8edf3; }
-dialog .d-info { font-size: 14px; line-height: 1.9; }
-dialog .d-label { font-size: 13px; line-height: 1.8; color: var(--ui-muted); }
-dialog .d-fields { gap: 20px; }
-dialog .d-fields label { gap: 8px; }
-dialog .d-fields input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), dialog .d-fields select, dialog .d-fields textarea { min-height: 44px; padding: 10px 12px; border-radius: 7px; border-color: #c5d0df; font-size: 14px; line-height: 1.7; }
-dialog .d-note, dialog .sales-field-note { font-size: 13px; line-height: 1.9; color: var(--ui-muted); }
-dialog .d-question { padding: 14px; border: 1px solid var(--ui-border); border-radius: 7px; background: #f8fafc; font-size: 14px; line-height: 1.8; }
-dialog .d-fields :is(.sales-members, .sales-scheduling, .sales-requested-dates, .sales-attachments, .sales-slot) { padding: 16px; border-color: var(--ui-border); border-radius: 8px; background: #fff; }
-dialog .d-fields fieldset > legend, dialog .sales-attachments h3 { font-size: 13px; color: #334860; }
-dialog .d-fields .sales-member-option { padding: 10px; font-size: 13px; border-radius: 6px; line-height: 1.8; }
-dialog .sales-member-count { font-size: 12px; color: var(--ui-muted); }
-dialog .sales-scheduling-options > label { padding: 12px; border-radius: 7px; }
-dialog .sales-scheduling-options strong { font-size: 14px; }
-dialog .sales-scheduling-options small { font-size: 12px; color: var(--ui-muted); line-height: 1.9; }
-dialog .sales-secondary { min-height: 42px; font-size: 13px; border-radius: 7px; background: #fff; }
-dialog .sales-date-picker { border: 0; padding: 4px 0 0; }
-dialog .sales-date-picker-head strong { font-size: 15px; }
-dialog .sales-date-picker-weekdays { font-size: 12px; }
-dialog .sales-date-picker-days > button { font-size: 14px; min-height: 42px; border-radius: 6px; }
-dialog .sales-date-selection-head > strong, dialog .sales-date-selection li { font-size: 12px; }
-dialog .sales-date-selection li { background: #f2f6ff; border-color: #d1def5; }
-dialog .sales-unrestricted { font-size: 13px; color: var(--ui-muted); }
-dialog .sales-attachment-item { background: #f8fafc; border-color: var(--ui-border); border-radius: 6px; }
+:is(dialog, :where(.sales-request-page-form)) #detail-body { padding: 24px; }
+:is(dialog, :where(.sales-request-page-form)) .d-kicker { font-size: 12px; }
+:is(dialog, :where(.sales-request-page-form)) .d-title { font-size: 24px; margin: 6px 0 22px; }
+:is(dialog, :where(.sales-request-page-form)) .d-list { border-top: 0; }
+:is(dialog, :where(.sales-request-page-form)) .d-row { grid-template-columns: 124px minmax(0, 1fr); gap: 16px; padding: 13px 0; border-color: #e8edf3; }
+:is(dialog, :where(.sales-request-page-form)) .d-info { font-size: 14px; line-height: 1.9; }
+:is(dialog, :where(.sales-request-page-form)) .d-label { font-size: 13px; line-height: 1.8; color: var(--ui-muted); }
+:is(dialog, :where(.sales-request-page-form)) .d-fields { gap: 20px; }
+:is(dialog, :where(.sales-request-page-form)) .d-fields label { gap: 8px; }
+:is(dialog, :where(.sales-request-page-form)) .d-fields input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), :is(dialog, :where(.sales-request-page-form)) .d-fields select, :is(dialog, :where(.sales-request-page-form)) .d-fields textarea { min-height: 44px; padding: 10px 12px; border-radius: 7px; border-color: #c5d0df; font-size: 14px; line-height: 1.7; }
+:is(dialog, :where(.sales-request-page-form)) .d-note, :is(dialog, :where(.sales-request-page-form)) .sales-field-note { font-size: 13px; line-height: 1.9; color: var(--ui-muted); }
+:is(dialog, :where(.sales-request-page-form)) .d-question { padding: 14px; border: 1px solid var(--ui-border); border-radius: 7px; background: #f8fafc; font-size: 14px; line-height: 1.8; }
+:is(dialog, :where(.sales-request-page-form)) .d-fields :is(.sales-members, .sales-scheduling, .sales-requested-dates, .sales-attachments, .sales-slot) { padding: 16px; border-color: var(--ui-border); border-radius: 8px; background: #fff; }
+:is(dialog, :where(.sales-request-page-form)) .d-fields fieldset > legend, :is(dialog, :where(.sales-request-page-form)) .sales-attachments h3 { font-size: 13px; color: #334860; }
+:is(dialog, :where(.sales-request-page-form)) .d-fields .sales-member-option { padding: 10px; font-size: 13px; border-radius: 6px; line-height: 1.8; }
+:is(dialog, :where(.sales-request-page-form)) .sales-member-count { font-size: 12px; color: var(--ui-muted); }
+:is(dialog, :where(.sales-request-page-form)) .sales-scheduling-options > label { padding: 12px; border-radius: 7px; }
+:is(dialog, :where(.sales-request-page-form)) .sales-scheduling-options strong { font-size: 14px; }
+:is(dialog, :where(.sales-request-page-form)) .sales-scheduling-options small { font-size: 12px; color: var(--ui-muted); line-height: 1.9; }
+:is(dialog, :where(.sales-request-page-form)) .sales-secondary { min-height: 42px; font-size: 13px; border-radius: 7px; background: #fff; }
+:is(dialog, :where(.sales-request-page-form)) .sales-date-picker { border: 0; padding: 4px 0 0; }
+:is(dialog, :where(.sales-request-page-form)) .sales-date-picker-head strong { font-size: 15px; }
+:is(dialog, :where(.sales-request-page-form)) .sales-date-picker-weekdays { font-size: 12px; }
+:is(dialog, :where(.sales-request-page-form)) .sales-date-picker-days > button { font-size: 14px; min-height: 42px; border-radius: 6px; }
+:is(dialog, :where(.sales-request-page-form)) .sales-date-selection-head > strong, :is(dialog, :where(.sales-request-page-form)) .sales-date-selection li { font-size: 12px; }
+:is(dialog, :where(.sales-request-page-form)) .sales-date-selection li { background: #f2f6ff; border-color: #d1def5; }
+:is(dialog, :where(.sales-request-page-form)) .sales-unrestricted { font-size: 13px; color: var(--ui-muted); }
+:is(dialog, :where(.sales-request-page-form)) .sales-attachment-item { background: #f8fafc; border-color: var(--ui-border); border-radius: 6px; }
 
 .dh-login-shell .dh-login-card { border: 1px solid var(--ui-border); border-radius: 12px; box-shadow: var(--ui-shadow); }
 .dh-login-shell .dh-login-description, .dh-login-shell .dh-login-routing-note, .dh-login-shell .dh-login-demo-note { font-size: 13px; color: var(--ui-muted); }
@@ -211,12 +211,12 @@ dialog .sales-attachment-item { background: #f8fafc; border-color: var(--ui-bord
   .inspector .fact dd { font-size: 14px; }
   dialog { width: calc(100vw - 24px); border-radius: 10px; }
   dialog .dialog-chrome { padding: 10px 16px; }
-  dialog #detail-body { padding: 20px 16px; }
-  dialog .d-title { font-size: 22px; }
-  dialog .d-row { grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
-  dialog .d-fields :is(.sales-members, .sales-scheduling, .sales-requested-dates, .sales-attachments, .sales-slot) { padding: 12px; }
-  dialog .d-fields input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), dialog .d-fields select, dialog .d-fields textarea { font-size: 16px; }
-  dialog .d-fields .sales-member-option { padding: 8px; font-size: 12px; }
-  dialog .sales-scheduling-options strong { font-size: 13px; }
-  dialog .sales-date-picker-days > button { min-height: 40px; font-size: 13px; }
+  :is(dialog, :where(.sales-request-page-form)) #detail-body { padding: 20px 16px; }
+  :is(dialog, :where(.sales-request-page-form)) .d-title { font-size: 22px; }
+  :is(dialog, :where(.sales-request-page-form)) .d-row { grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
+  :is(dialog, :where(.sales-request-page-form)) .d-fields :is(.sales-members, .sales-scheduling, .sales-requested-dates, .sales-attachments, .sales-slot) { padding: 12px; }
+  :is(dialog, :where(.sales-request-page-form)) .d-fields input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), :is(dialog, :where(.sales-request-page-form)) .d-fields select, :is(dialog, :where(.sales-request-page-form)) .d-fields textarea { font-size: 16px; }
+  :is(dialog, :where(.sales-request-page-form)) .d-fields .sales-member-option { padding: 8px; font-size: 12px; }
+  :is(dialog, :where(.sales-request-page-form)) .sales-scheduling-options strong { font-size: 13px; }
+  :is(dialog, :where(.sales-request-page-form)) .sales-date-picker-days > button { min-height: 40px; font-size: 13px; }
 }

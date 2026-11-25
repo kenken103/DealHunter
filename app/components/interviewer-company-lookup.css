@@ -1,0 +1,83 @@
+.ng-lookup {
+  padding: 18px 20px;
+  border-bottom: 1px solid #d6deeb;
+  color: #283f61;
+  font-size: 13px;
+}
+.ng-lookup h2 { margin: 0; font-size: 17px; color: #21395f; }
+.ng-lookup-explainer { margin: 4px 0 12px; color: #526681; line-height: 1.65; }
+.ng-lookup-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; }
+.ng-lookup-switch { display: inline-flex; align-items: stretch; max-width: 100%; }
+.ng-lookup-switch button {
+  border: 1px solid #adbed5;
+  color: #324e79;
+  background: white;
+  min-height: 42px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ng-lookup-switch button:first-child { border-radius: 5px 0 0 5px; }
+.ng-lookup-switch button:last-child { border-radius: 0 5px 5px 0; margin-left: -1px; }
+.ng-lookup-switch button[aria-pressed="true"] { background: #244899; color: white; border-color: #244899; }
+:is(.ng-lookup-controls, .ng-manual) label { display: grid; gap: 4px; min-width: 0; font-size: 12px; font-weight: 600; }
+.ng-lookup-search { flex: 1 1 210px; }
+:is(.ng-lookup-controls, .ng-manual) :is(input, select) {
+  width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px;
+  border: 1px solid #adbed5; border-radius: 5px; color: #253d62; background: white; font: inherit;
+}
+.ng-manual { margin-top: 18px; padding: 10px 14px; border: 1px solid #d4deeb; border-radius: 6px; background: #f7faff; }
+.ng-manual summary { cursor: pointer; font-weight: 650; padding-block: 4px; }
+.ng-manual > label { margin-top: 10px; max-width: 330px; }
+.ng-manual-form { display: flex; align-items: end; flex-wrap: wrap; gap: 10px 14px; margin-top: 12px; }
+.ng-manual-form label { flex: 1 1 210px; }
+.ng-manual-form button { min-height: 42px; background: #fff; }
+.ng-manual h3 { font-size: 13px; margin: 14px 0 4px; }
+.ng-manual-marks { list-style: none; margin: 0; padding: 0; }
+.ng-manual-marks li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; justify-content: space-between; padding: 7px 0; border-top: 1px solid #e1e7ee; overflow-wrap: anywhere; }
+.ng-manual-marks li small { margin-inline-start: 4px; }
+.ng-lookup :where([role="status"], [role="alert"]) { margin: 10px 0 0; }
+.ng-lookup .ng-lookup-summary { color: #536781; }
+.ng-lookup-options {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr));
+  gap: 5px; margin-top: 8px; max-height: 185px; overflow-y: auto; padding: 2px;
+}
+.ng-lookup-options button {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px;
+  padding: 7px 9px; text-align: left; background: white; border: 1px solid #d4deeb; border-radius: 4px;
+  color: #263e61; overflow-wrap: anywhere;
+}
+.ng-lookup-options button[aria-pressed="true"] { border-color: #3664ab; background: #eef4ff; }
+.ng-lookup small { font-weight: 500; color: #50647f; }
+.ng-lookup-counts { flex: none; color: #516580; font-size: 11px; }
+.ng-lookup-counts b, .ng-lookup-totals strong { color: #843526; }
+.ng-lookup-results { margin-top: 12px; border-top: 1px solid #d6deeb; padding-top: 12px; }
+.ng-lookup-results h3 { margin: 0; overflow-wrap: anywhere; font-size: 15px; }
+.ng-lookup-results h3 small { font-size: 12px; }
+.ng-lookup-totals { margin: 3px 0 0; font-size: 12px; }
+.ng-lookup-group { margin-top: 12px; }
+.ng-lookup-group h4 { margin: 0 0 4px; font-size: 13px; color: #324e79; }
+.ng-lookup-group h4 span { color: #536781; font-size: 12px; font-weight: 500; }
+.ng-lookup-group ul {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  gap: 0 20px; padding: 0; margin: 0; list-style: none;
+}
+.ng-lookup-group li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-width: 0; padding: 6px 0; border-top: 1px solid #e1e7ee; overflow-wrap: anywhere;
+}
+.ng-lookup-reason { display: block; font-size: 11px; }
+.ng-lookup-ng, .ng-lookup-ok {
+  min-width: 35px; flex: none; text-align: center; padding: 1px 5px; border-radius: 4px;
+  font-size: 12px; line-height: 1.6;
+}
+.ng-lookup-ng { border: 1px solid #be8170; color: #843526; background: #fff0eb; }
+.ng-lookup-ok { border: 1px solid #b5cfbd; color: #2e6349; background: #f1f7f2; }
+.ng-lookup :where(button, input, select):focus-visible { outline: 2px solid #3059af; outline-offset: 1px; z-index: 1; }
+@media (max-width: 650px) {
+  .ng-lookup { padding: 14px; }
+  .ng-lookup-controls { align-items: stretch; }
+  .ng-lookup-switch, .ng-lookup-controls label { width: 100%; }
+  .ng-lookup-switch button { flex: 1; }
+  :is(.ng-lookup-controls, .ng-manual) :where(button, input, select), .ng-lookup-options button { min-height: 44px; }
+}

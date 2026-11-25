@@ -5,11 +5,11 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import type { DemoUser } from "./demo-auth";
 
-export async function backendRequest(user: DemoUser, pathname: string, body?: unknown) {
+export async function backendRequest(user: DemoUser, pathname: string, body?: unknown, method = body === undefined ? "GET" : "POST") {
   try {
     const key = (await readFile(path.join(process.cwd(), ".local", "api-key"), "utf8")).trim();
     const response = await fetch(`http://127.0.0.1:8080/api/${pathname}`, {
-      method: body === undefined ? "GET" : "POST",
+      method,
       headers: {
         "X-DealHunter-User": user.id,
         "X-DealHunter-Key": key,
@@ -17,7 +17,7 @@ export async function backendRequest(user: DemoUser, pathname: string, body?: un
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(pathname === "available-interviewers" ? 25000 : 10000),
     });
     const data = await response.json();
     return NextResponse.json(pathname === "dashboard" && response.ok ? { ...data, currentUser: user } : data, {
