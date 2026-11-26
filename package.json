@@ -11,6 +11,7 @@
     "verify:auth": "node scripts/verify-auth.mjs",
     "backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-backend.ps1",
     "db:backup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo-data.ps1 -Action Backup",
+    "db:snapshot": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo-data.ps1 -Action Snapshot",
     "db:restore": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/demo-data.ps1 -Action Restore",
     "demo": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-demo.ps1"
   },

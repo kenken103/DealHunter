@@ -6,7 +6,7 @@ SESの面談依頼から日程回答・所感・合否・初回入場までを�
 
 必要環境：Git、Node.js 20.9以降（npmを含む）、JDK 21以降、PostgreSQL 17。付属の起動スクリプトはWindows PowerShell用です。初回は依存ライブラリを取得するため、インターネット接続が必要です。
 
-初めて取得する場合は、PowerShellで次を実行します。取得済みならプロジェクトのフォルダで `npm.cmd run demo` だけを実行してください。
+登録済みデータを引き継ぐ場合は、初回起動前に[クローンから復元する手順](#クローンから復元する)を実行してください。空のデータから始める場合は、PowerShellで次を実行します。取得済みならプロジェクトのフォルダで `npm.cmd run demo` だけを実行してください。
 
 ```powershell
 git clone https://github.com/kenken103/DealHunter.git
@@ -85,6 +85,36 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-backend.ps1 -R
 
 ## 別PCに現在のデータを移す
 
+### クローンから復元する
+
+元のPCで現在のDBを暗号化し、Gitで共有できるスナップショットを作成します。データを更新したら、同じ手順でスナップショットを作り直します。
+
+```powershell
+npm.cmd run db:snapshot
+git add -- data/dealhunter-data.dump.enc
+git commit -m "Update encrypted DealHunter data"
+git push
+```
+
+復元鍵は元のPCの `.local/dealhunter-data.key` にあります。鍵と平文のバックアップはGit管理外の `.local/` に保管します。復元鍵は、利用を許可された人に安全な経路で個別に渡してください。次回のスナップショット更新でも同じ鍵を使います。
+
+別PCで必要環境を用意し、リポジトリをクローンします。
+
+```powershell
+git clone https://github.com/kenken103/DealHunter.git
+cd DealHunter
+New-Item -ItemType Directory -Force -Path .local | Out-Null
+```
+
+受け取った鍵をクローン先の `.local/dealhunter-data.key` に置き、初回起動前に復元します。復元先に初期化済みのDBがある場合は処理を中止します。
+
+```powershell
+npm.cmd run db:restore
+npm.cmd run demo
+```
+
+### ダンプファイルを直接移して復元する
+
 元のPCのプロジェクトフォルダでバックアップを作成します。専用PostgreSQLが停止していれば自動で起動します。
 
 ```powershell
@@ -99,6 +129,8 @@ npm.cmd run db:backup
 npm.cmd run db:restore -- -BackupPath '.\.local\dealhunter-data.dump'
 npm.cmd run demo
 ```
+
+### 復元後のログインと連携設定
 
 [ログイン画面](http://127.0.0.1:3100/login)を開き、元のPCで使っていたアカウントのメールアドレスとパスワードでログインしてください。管理者の認証情報もバックアップ時点のものです。初期管理者パスワードのファイルが必要な場合は、元のPCで確認してください。
 
