@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { DashboardData, ImportedCase, InterviewRequest, Project, ScheduleEvent } from "../types";
 import { companyNameForDisplay } from "../lib/company-name";
 import type { PreviewDialogKey } from "./PreviewDialog";
@@ -63,22 +63,33 @@ function stageOf(row: CaseRow) {
   const meeting = orderedMeetings(row.events).at(-1);
   if (meeting && inactiveMeeting(meeting)) return inactiveLabel(meeting);
   if (meeting) return `面談 ${meeting.round || 1}/${meeting.totalRounds || 1} ${meetingStatus(meeting)}`;
-  return row.imported ? importedCaseStage(row.imported) : "日程調整中";
+  return row.imported ? importedCaseStage(row.imported) : row.request ? "日程調整中" : "面談未登録";
 }
 function stageGroup(row: CaseRow) {
   if (row.imported && !row.request && !row.events.length) {
     return { joined: "active", declined: "closed", rejected: "closed", unknown: "unknown" }[row.imported.status];
   }
+  if (!row.request && !row.events.length) return "unknown";
   const stage = stageOf(row);
   return stage.includes("入場済み") ? "active" : /見送り|辞退|中止/.test(stage) ? "closed" : "open";
 }
-export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: DashboardData; onWorkflow: (key: PreviewDialogKey) => void; onEvent: (event: ScheduleEvent) => void }) {
+export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: { data: DashboardData; onWorkflow: (key: PreviewDialogKey) => void; onEvent: (event: ScheduleEvent) => void; onChanged: () => Promise<void> }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [myCasesOnly, setMyCasesOnly] = useState(false);
   const [selectedKey, setSelectedKey] = useState("");
   const [detailView, setDetailView] = useState<"preview" | "open" | "closed">("preview");
   const [personId, setPersonId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState("");
+  const [deletedIds, setDeletedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const deleteDialog = useRef<HTMLDialogElement>(null);
+  const cancelDelete = useRef<HTMLButtonElement>(null);
+  const deleteOpener = useRef<HTMLButtonElement>(null);
+  const deletionInFlight = useRef(false);
+  const caseSearch = useRef<HTMLInputElement>(null);
   const people = new Map([...data.requests, ...data.events].map(record => [record.studentId, record.person]));
   for (const record of data.importedCases ?? []) {
     if (record.studentId && record.person) people.set(record.studentId, record.person);
@@ -112,6 +123,64 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
   }, []);
 
   useEffect(() => {
+    if (!deleteTarget) return;
+    const dialog = deleteDialog.current;
+    dialog?.showModal();
+    cancelDelete.current?.focus();
+    return () => { if (dialog?.open) dialog.close(); };
+  }, [deleteTarget]);
+
+  function openDeletion(event: ReactMouseEvent<HTMLButtonElement>, project: Project) {
+    deleteOpener.current = event.currentTarget;
+    setDeleteError("");
+    setDeleteNotice("");
+    setDeleteTarget(project);
+  }
+
+  function closeDeletion() {
+    if (deletionInFlight.current) return;
+    setDeleteTarget(null);
+    requestAnimationFrame(() => {
+      const target = deleteOpener.current?.isConnected ? deleteOpener.current : caseSearch.current;
+      target?.focus();
+    });
+  }
+
+  async function deleteProject() {
+    if (!deleteTarget || deletionInFlight.current) return;
+    deletionInFlight.current = true;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const response = await fetch(`/api/workflow/projects/${encodeURIComponent(deleteTarget.id)}/delete`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }),
+      });
+      if (response.status === 401) { window.location.assign("/login"); return; }
+      const result = await response.json().catch(() => null) as { error?: string; message?: string; projectId?: string } | null;
+      if (!response.ok) {
+        if ([403, 404, 409].includes(response.status)) void onChanged();
+        setDeleteError(result?.error || "案件を削除できませんでした。最新の案件情報を確認してください。");
+        return;
+      }
+      if (result?.projectId !== deleteTarget.id) throw new Error();
+      setDeletedIds(ids => new Set(ids).add(deleteTarget.id));
+      setDeleteNotice(result.message || "案件を削除しました。");
+      setDeleteTarget(null);
+      setSelectedKey("");
+      setDetailView("closed");
+      selectedCard.current = null;
+      requestAnimationFrame(() => caseSearch.current?.focus());
+      void onChanged();
+    } catch {
+      setDeleteError("削除結果を確認できませんでした。最新の案件情報を確認してください。");
+      void onChanged();
+    } finally {
+      deletionInFlight.current = false;
+      setDeleting(false);
+    }
+  }
+
+  useEffect(() => {
     if (detailView !== "open") return;
     function dismissOnOutsideClick(event: MouseEvent) {
       const target = event.target;
@@ -135,8 +204,9 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
     setDetailView(current => current === "open" ? "preview" : current);
   }
   const rows = new Map<string, CaseRow>();
-  const projects = new Map(data.projects.map(project => [project.id, project]));
-  for (const project of data.projects) {
+  const projects = new Map(data.projects.filter(project => !deletedIds.has(project.id)).map(project => [project.id, project]));
+  const pending = data.recruitments.filter(item => item.status === "pending" && projects.has(item.projectId));
+  for (const project of projects.values()) {
     for (const request of data.requests.filter(item => item.projectId === project.id)) {
       const key = `${project.id}:${request.studentId}`;
       rows.set(key, { key, project, person: request.person, studentId: request.studentId, request, events: data.events.filter(event => event.projectId === project.id && event.studentId === request.studentId) });
@@ -154,6 +224,13 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
     const row = rows.get(key) ?? { key, project, studentId, person: imported.person || "未設定", events: [] };
     rows.set(key, { ...row, imported });
   }
+  const listedProjects = new Set([...rows.values()].map(row => row.project.id));
+  for (const item of pending) listedProjects.add(item.projectId);
+  for (const project of projects.values()) {
+    if (listedProjects.has(project.id)) continue;
+    const key = `${project.id}:`;
+    rows.set(key, { key, project, person: "未設定", studentId: "", events: [] });
+  }
   const allRows = [...rows.values()];
   const query = search.trim().toLocaleLowerCase();
   function matchesSearch(name: string, person: string, project: SearchableProject) {
@@ -162,6 +239,7 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
       .join(" ").toLocaleLowerCase().includes(query);
   }
   const salesId = data.currentUser.id;
+  const canDeleteTarget = deleteTarget && projects.get(deleteTarget.id)?.salesId === salesId;
   const filtered = allRows.filter(row =>
     (!myCasesOnly || row.project.salesId === salesId) &&
     (status === "all" || status === stageGroup(row)) &&
@@ -171,12 +249,12 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
   const canEdit = selected?.project.salesId === salesId;
   const latest = selected ? orderedMeetings(selected.events).at(-1) : undefined;
   const entry = selected?.events.find(event => event.entry);
-  const pendingRecruitments = data.recruitments.filter(item =>
-    item.status === "pending" && (status === "all" || status === "open") &&
+  const pendingRecruitments = pending.filter(item =>
+    (status === "all" || status === "open") &&
     (!myCasesOnly || projects.get(item.projectId)?.salesId === salesId) &&
     matchesSearch(item.project, item.leaderName, item)
   );
-  const hasCases = allRows.length > 0 || data.recruitments.some(item => item.status === "pending");
+  const hasCases = allRows.length > 0 || pending.length > 0;
 
   function changeStatus(nextStatus: string) {
     setStatus(nextStatus);
@@ -208,7 +286,7 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
     </div>
     <div className="case-portfolio-filters">
       <div className="case-portfolio-toolbar">
-        <label>案件・面談者を検索<input type="search" value={search} onChange={e => { setSearch(e.target.value); returnToFilteredList(); }} placeholder="案件名・氏名・会社・種類" /></label>
+        <label>案件・面談者を検索<input ref={caseSearch} type="search" value={search} onChange={e => { setSearch(e.target.value); returnToFilteredList(); }} placeholder="案件名・氏名・会社・種類" /></label>
         <label>状態<select value={status} onChange={e => changeStatus(e.target.value)}>
           <option value="all">すべて</option><option value="open">対応中</option><option value="active">参画（入場済み）</option><option value="closed">見送り・辞退・中止</option><option value="unknown">結果未登録</option>
         </select></label>
@@ -221,12 +299,19 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
         <span aria-live="polite">面談者別 {filtered.length}件{pendingRecruitments.length > 0 && ` / 選定待ち ${pendingRecruitments.length}件`}</span>
       </div>
     </div>
+    {deleteNotice && <p className="sales-success" role="status">{deleteNotice}</p>}
     {pendingRecruitments.length > 0 && <section className="case-pending-recruitments" aria-label="面談者の選定待ち">
       <h2>面談者の選定待ち {pendingRecruitments.length}件</h2>
-      {pendingRecruitments.map(item => <button type="button" className="sales-request-row" key={item.id} onClick={() => onWorkflow({ kind: "recruitment", recruitmentId: item.id })}>
-        <strong>{item.project}</strong><span>リーダー：{item.leaderName} · 選定状況を確認</span>
-        <CardCompanies upperCompany={item.upperCompany} primeCompany={item.primeCompany} endCompany={item.endCompany} badge={badge} />
-      </button>)}
+      {pendingRecruitments.map(item => <div className="case-pending-card" key={item.id}>
+        <button type="button" className="sales-request-row" onClick={() => onWorkflow({ kind: "recruitment", recruitmentId: item.id })}>
+          <strong>{item.project}</strong><span>リーダー：{item.leaderName} · 選定状況を確認</span>
+          <CardCompanies upperCompany={item.upperCompany} primeCompany={item.primeCompany} endCompany={item.endCompany} badge={badge} />
+        </button>
+        {projects.get(item.projectId)?.salesId === salesId && <button type="button" className="sales-secondary sales-delete-request" aria-label={`${item.project}の案件を削除`} onClick={event => {
+          const project = projects.get(item.projectId);
+          if (project) openDeletion(event, project);
+        }}>案件を削除</button>}
+      </div>)}
     </section>}
     <div className={`case-portfolio-columns${detailView === "open" ? " is-detail" : detailView === "closed" ? " is-list-only" : ""}`}>
       <div ref={listRef} className="case-portfolio-list" aria-label="案件一覧">
@@ -268,10 +353,21 @@ export default function CasePortfolio({ data, onWorkflow, onEvent }: { data: Das
           </div>
           <section><h3>案件概要</h3><p className="case-body">{selected.project.notes || "未登録"}</p></section>
           {selected.imported && <section><h3>面談・入場の記録</h3><ImportedCaseRecord record={selected.imported} /></section>}
-          {(!selected.imported || selected.events.length > 0 || selected.request) && <section><h3>この面談者の面談履歴</h3><InterviewHistory data={data} projectId={selected.project.id} studentId={selected.studentId} onEvent={onEvent} /></section>}
+          {(selected.events.length > 0 || selected.request) && <section><h3>この面談者の面談履歴</h3><InterviewHistory data={data} projectId={selected.project.id} studentId={selected.studentId} onEvent={onEvent} /></section>}
+          {canEdit && <section className="case-delete-section"><button type="button" className="sales-secondary sales-delete-request" onClick={event => openDeletion(event, selected.project)}>案件を削除</button></section>}
           <button type="button" className="text-link" onClick={backToList}>一覧へ戻る</button>
         </> : <p className="case-muted">案件を選択してください。</p>}
       </aside>}
     </div>
+    {deleteTarget && <dialog ref={deleteDialog} className="case-delete-dialog" aria-labelledby="case-delete-title" aria-describedby="case-delete-name case-delete-warning" onCancel={event => { event.preventDefault(); closeDeletion(); }}>
+      <h2 id="case-delete-title" className="d-title">この案件を削除しますか？</h2>
+      <p id="case-delete-name" className="case-delete-name">{deleteTarget.name}</p>
+      <p id="case-delete-warning" className="case-delete-warning">案件に紐づく全員分の面談依頼・面談や入場の予定と履歴・所感・質問・添付ファイルなどが削除されます。削除したデータは元に戻せません。</p>
+      {deleteError && <p className="sales-error" role="alert">{deleteError}</p>}
+      <div className="case-delete-actions">
+        <button type="button" className="sales-secondary" ref={cancelDelete} onClick={closeDeletion} disabled={deleting}>戻る</button>
+        <button type="button" className="d-button sales-delete-confirm" onClick={() => void deleteProject()} disabled={deleting || !canDeleteTarget}>{deleting ? "削除中…" : "案件を削除する"}</button>
+      </div>
+    </dialog>}
   </section>;
 }

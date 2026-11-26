@@ -216,6 +216,18 @@
   background: #eaf0fa;
 }
 .case-pending-recruitments h2 { font-size: 14px; color: #354c71; }
+.case-pending-card { display: grid; gap: 6px; min-width: 0; }
+.case-pending-card > .sales-delete-request { justify-self: end; }
+.case-delete-section { margin-bottom: 16px; }
+.case-delete-dialog { padding: clamp(16px, 4vw, 24px); }
+.case-delete-dialog .d-title { margin-top: 0; }
+.case-delete-name { font-weight: 650; overflow-wrap: anywhere; }
+.case-delete-warning { margin: 12px 0 18px; color: #752a24; font-size: 14px; line-height: 1.75; }
+.case-delete-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.case-delete-actions button { min-height: 44px; }
+@media (max-width: 520px) {
+  .case-delete-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+}
 
 .case-card-companies {
   display: grid;

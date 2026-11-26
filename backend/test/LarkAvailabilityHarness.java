@@ -28,12 +28,17 @@ public final class LarkAvailabilityHarness {
     private static final String SECOND = "yamamoto@example.test";
     private static final String FIRST_ID = "ou_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private static final String SECOND_ID = "ou_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    private static final String MESSAGE = "面談依頼を削除しました。\n案件名「検証」";
+    private static final String NOTICE_ID = "8ddb1b44-81ce-4fd7-ae13-46d985058bcd";
+    private static final String MESSAGE_ID = "om_fixture";
     private static final ZoneId JAPAN = ZoneId.of("Asia/Tokyo");
 
-    private enum Fault { NONE, MISSING_USER, MISSING_ITEMS, INVALID_TIME, DENIED, EXPIRE_ONCE }
+    private enum Fault { NONE, MISSING_USER, MISSING_ITEMS, INVALID_TIME, DENIED, EXPIRE_ONCE, MISSING_MESSAGE_ID }
     private volatile Fault fault = Fault.NONE;
     private final AtomicInteger issuedTokens = new AtomicInteger();
     private final AtomicInteger contactRequests = new AtomicInteger();
+    private final AtomicInteger messageRequests = new AtomicInteger();
+    private volatile JsonNode lastMessage;
 
     public static void main(String[] args) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -43,6 +48,7 @@ public final class LarkAvailabilityHarness {
         try {
             URI base = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/open-apis/");
             fixture.checkResponses(base);
+            fixture.checkMessages(base);
             fixture.checkConfiguredOpenIds(base);
             DealHunterServer.larkAvailability = new LarkAvailability(base, APP_ID, SECRET);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
@@ -71,6 +77,25 @@ public final class LarkAvailabilityHarness {
             }
             if (!("Bearer " + TOKEN + issuedTokens.get()).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
                 respond(exchange, 401, Map.of("code", 99991663));
+                return;
+            }
+            if (path.equals("/open-apis/im/v1/messages")) {
+                messageRequests.incrementAndGet();
+                lastMessage = body;
+                if (!"receive_id_type=open_id".equals(exchange.getRequestURI().getQuery()) ||
+                        !FIRST_ID.equals(body.path("receive_id").asText()) ||
+                        !"text".equals(body.path("msg_type").asText())) {
+                    respond(exchange, 400, Map.of("code", 230034));
+                } else if (fault == Fault.EXPIRE_ONCE) {
+                    fault = Fault.NONE;
+                    respond(exchange, 401, Map.of("code", 99991663));
+                } else if (fault == Fault.DENIED) {
+                    respond(exchange, 403, Map.of("code", 230035, "msg", SECRET));
+                } else if (fault == Fault.MISSING_MESSAGE_ID) {
+                    respond(exchange, 200, Map.of("code", 0, "data", Map.of()));
+                } else {
+                    respond(exchange, 200, Map.of("code", 0, "data", Map.of("message_id", MESSAGE_ID)));
+                }
                 return;
             }
             if (!"user_id_type=open_id".equals(exchange.getRequestURI().getQuery())) {
@@ -174,6 +199,47 @@ public final class LarkAvailabilityHarness {
         System.out.println("PASS: loopback Lark mapping, free/busy, incomplete records, denied calendar access and expired token retry.");
     }
 
+    private void checkMessages(URI base) throws IOException {
+        LarkAvailability client = new LarkAvailability(base, APP_ID, SECRET);
+        if (!client.canSendMessages() ||
+                !MESSAGE_ID.equals(client.sendText("  TAKAHASHI@example.test  ", MESSAGE, NOTICE_ID)) ||
+                !MESSAGE.equals(JSON.readTree(lastMessage.path("content").asText()).path("text").asText()) ||
+                !NOTICE_ID.equals(lastMessage.path("uuid").asText())) {
+            throw new AssertionError("A direct notification must preserve text and its UUID");
+        }
+        int before = messageRequests.get();
+        int contactsBefore = contactRequests.get();
+        expectUnavailable(() -> client.sendText("demo@dealhunter.example", MESSAGE, NOTICE_ID));
+        expectUnavailable(() -> client.sendText(FIRST, MESSAGE, NOTICE_ID + "-invalid"));
+        expectUnavailable(() -> client.sendText(FIRST, " ", NOTICE_ID));
+        LarkAvailability unconfigured = new LarkAvailability(base, "", "");
+        if (unconfigured.canSendMessages()) throw new AssertionError("An unconfigured client cannot send");
+        expectUnavailable(() -> unconfigured.sendText(FIRST, MESSAGE, NOTICE_ID));
+        if (messageRequests.get() != before || contactRequests.get() != contactsBefore) {
+            throw new AssertionError("Invalid requests must not call Lark");
+        }
+        fault = Fault.DENIED;
+        expectUnavailable(() -> client.sendText(FIRST, MESSAGE, NOTICE_ID));
+        fault = Fault.MISSING_MESSAGE_ID;
+        expectUnavailable(() -> client.sendText(FIRST, MESSAGE, NOTICE_ID));
+        fault = Fault.EXPIRE_ONCE;
+        int tokensBefore = issuedTokens.get();
+        if (!MESSAGE_ID.equals(client.sendText(FIRST, MESSAGE, NOTICE_ID)) || issuedTokens.get() != tokensBefore + 1 ||
+                !NOTICE_ID.equals(lastMessage.path("uuid").asText())) {
+            throw new AssertionError("A token refresh must reuse the notification UUID");
+        }
+        System.out.println("PASS: Lark direct text message body, UUID, unconfigured and denied access, missing message ID and token renewal.");
+    }
+
+    private static void expectUnavailable(Runnable action) {
+        try {
+            action.run();
+            throw new AssertionError("Expected an unavailable notification");
+        } catch (LarkAvailability.UnavailableException e) {
+            if (e.getMessage().contains(SECRET)) throw new AssertionError("The upstream error content was exposed");
+        }
+    }
+
     private void checkConfiguredOpenIds(URI base) throws IOException {
         Path directory = Path.of(System.getenv("DEALHUNTER_END_TEST_ROOT"));
         Path config = Files.createTempFile(directory, "lark-test-settings-", ".json");
@@ -185,10 +251,18 @@ public final class LarkAvailabilityHarness {
             Map<String, String> mapping = Map.of(mappedEmail, FIRST_ID);
             JSON.writeValue(config.toFile(), Map.of("appId", APP_ID, "appSecret", SECRET, "openIds", mapping));
             int before = contactRequests.get();
-            var result = LarkAvailability.fromFile(config, base).check(people, start, end);
+            var client = LarkAvailability.fromFile(config, base);
+            var result = client.check(people, start, end);
             if (contactRequests.get() != before || result.get("manual") != LarkAvailability.Status.FREE
                     || result.getOrDefault("unmapped", LarkAvailability.Status.UNKNOWN) != LarkAvailability.Status.UNKNOWN) {
                 throw new AssertionError("Manual mappings must work without contact lookup or fallback for an unregistered member");
+            }
+            if (!MESSAGE_ID.equals(client.sendText(mappedEmail, MESSAGE, NOTICE_ID))) {
+                throw new AssertionError("An explicitly mapped demo account should receive a direct notification");
+            }
+            expectUnavailable(() -> client.sendText(SECOND, MESSAGE, NOTICE_ID));
+            if (contactRequests.get() != before) {
+                throw new AssertionError("Manual notification mappings must bypass directory lookup");
             }
 
             Map<String, String> duplicate = Map.of(mappedEmail, FIRST_ID, SECOND, FIRST_ID);

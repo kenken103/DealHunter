@@ -28,8 +28,9 @@ import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-/** Persisted local demo. Notifications and calendar entries remain saved previews. */
+/** Persisted local workflow with optional Lark delivery for cancelled requests. */
 public final class DealHunterServer {
     private static final ObjectMapper JSON = new ObjectMapper()
         .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -88,7 +89,12 @@ public final class DealHunterServer {
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         server.createContext("/", DealHunterServer::handle);
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(0)));
+        var notificationWorker = Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().factory());
+        notificationWorker.scheduleWithFixedDelay(DealHunterServer::deliverCancellationNotification, 0, 3, TimeUnit.SECONDS);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            notificationWorker.shutdownNow();
+            server.stop(0);
+        }));
         server.start();
         System.out.println("DealHunter Java workflow API ready: http://127.0.0.1:" + port + " (PostgreSQL, " + API_VERSION + ")");
     }
@@ -602,7 +608,7 @@ public final class DealHunterServer {
             require(((Number)one(c,"SELECT count(*) AS n FROM app_users WHERE role='admin'").get("n")).longValue()>1,409,"最後の管理者の役割は変更できません。別の管理者を先に登録してください。");
         if(previousRole.equals("leader") && !nextRole.equals("leader")) {
             require(one(c,"SELECT student_id FROM leader_members WHERE leader_id=? AND active LIMIT 1",userId)==null,409,"先に部下の所属リーダーを変更してください。");
-            require(one(c,"SELECT a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE p.leader_id=? AND a.status='pending' LIMIT 1",userId)==null,409,"面談者の選定待ち案件があります。選定を完了してから役割を変更してください。");
+            require(one(c,"SELECT a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE p.leader_id=? AND a.status='pending' AND a.cancelled_at IS NULL LIMIT 1",userId)==null,409,"面談者の選定待ち案件があります。選定を完了してから役割を変更してください。");
         }
         String leaderId=null;
         if(body.has("leaderId")) {
@@ -668,9 +674,38 @@ public final class DealHunterServer {
         }
         return Map.of("message","案件情報を更新しました。","projectId",projectId);
     }
+    private static Object deleteProject(Connection c, User user, String projectId, JsonNode body) throws SQLException {
+        role(user,"sales");
+        require(body.size()==1 && body.path("confirm").isBoolean() && body.path("confirm").booleanValue(),400,"案件削除の警告を確認してください。");
+        try {
+            execute(c,"SET LOCAL lock_timeout = '1s'");
+            Map<String,Object> project=one(c,"SELECT sales_id FROM projects WHERE id=? FOR UPDATE NOWAIT",projectId);
+            require(project!=null,404,"案件が見つかりません。");
+            require(user.id.equals(str(project,"sales_id")),403,"担当案件のみ削除できます。");
+            // Other workflow actions can already hold a child row before taking a project lock via a foreign key.
+            execute(c,"SELECT id FROM interview_requests WHERE project_id=? FOR UPDATE NOWAIT",projectId);
+            execute(c,"SELECT id FROM scheduled_events WHERE project_id=? FOR UPDATE NOWAIT",projectId);
+            execute(c,"SELECT id FROM recruitments WHERE project_id=? FOR UPDATE NOWAIT",projectId);
+
+            execute(c,"DELETE FROM interview_questions WHERE project_id=?",projectId);
+            execute(c,"DELETE FROM interview_feedback f USING scheduled_events e WHERE f.event_id=e.id AND e.project_id=?",projectId);
+            execute(c,"DELETE FROM scheduled_events WHERE project_id=?",projectId);
+            execute(c,"DELETE FROM candidate_slots s USING interview_requests r WHERE s.request_id=r.id AND r.project_id=?",projectId);
+            execute(c,"DELETE FROM interview_requests WHERE project_id=?",projectId);
+            execute(c,"DELETE FROM pending_tasks WHERE project_id=?",projectId);
+            execute(c,"DELETE FROM notification_previews WHERE project_id=?",projectId);
+            execute(c,"DELETE FROM projects WHERE id=?",projectId);
+            return Map.of("message","案件と関連データを削除しました。","projectId",projectId);
+        } catch(SQLException error) {
+            if(Set.of("55P03","40P01").contains(Objects.toString(error.getSQLState(),""))) {
+                throw new ApiError(409,"案件の更新中です。最新の状態を確認してから、もう一度削除してください。");
+            }
+            throw error;
+        }
+    }
     private static Map<String, Object> request(Connection c, User user, String id, String requiredRole) throws SQLException {
         role(user, requiredRole);
-        Map<String, Object> row = one(c, "SELECT r.*,p.sales_id,p.name AS project_name,p.notes,u.display_name AS person,su.display_name AS sales_name FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id JOIN app_users su ON su.id=p.sales_id WHERE r.id=? FOR UPDATE OF r", id);
+        Map<String, Object> row = one(c, "SELECT r.*,p.sales_id,p.name AS project_name,p.notes,u.display_name AS person,su.display_name AS sales_name FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id JOIN app_users su ON su.id=p.sales_id WHERE r.id=? AND r.cancelled_at IS NULL FOR UPDATE OF r", id);
         require(row != null, 404, "面談依頼が見つかりません。");
         require(user.id.equals(str(row, requiredRole.equals("sales") ? "sales_id" : "student_id")), 403, "この面談依頼は操作できません。");
         return row;
@@ -803,7 +838,7 @@ public final class DealHunterServer {
     }
     private static void downloadAttachment(Connection c, User user, String requestId, HttpExchange exchange) throws Exception {
         require(user.role.equals("sales") || user.role.equals("student"),403,"このファイルは利用できません。");
-        Map<String,Object> r=one(c,"SELECT project_id,student_id FROM interview_requests WHERE id=?",requestId);
+        Map<String,Object> r=one(c,"SELECT project_id,student_id FROM interview_requests WHERE id=? AND cancelled_at IS NULL",requestId);
         require(r!=null,404,"面談依頼が見つかりません。");
         require(user.role.equals("sales") || user.id.equals(r.get("student_id")),403,"このファイルは利用できません。");
         Map<String,Object> row=one(c,"SELECT filename,content FROM (SELECT filename,content,0 AS priority FROM project_attachments WHERE project_id=? UNION ALL SELECT filename,content,1 AS priority FROM request_attachments WHERE request_id=?) a ORDER BY priority LIMIT 1",r.get("project_id"),requestId);
@@ -907,10 +942,14 @@ public final class DealHunterServer {
             "body","閲覧専用です。面談依頼・回答・日時の調整は営業と各面談者の間で直接行います。"));
         return response;
     }
+    private static Map<String,Object> recruitment(Connection c, String recruitmentId) throws SQLException {
+        Map<String,Object> recruitment=one(c,"SELECT a.*,p.leader_id,p.sales_id,p.name AS project_name,p.notes,su.display_name AS sales_name FROM recruitments a JOIN projects p ON p.id=a.project_id JOIN app_users su ON su.id=p.sales_id WHERE a.id=? AND a.cancelled_at IS NULL FOR UPDATE OF a",recruitmentId);
+        require(recruitment!=null,404,"面談者の選定依頼が見つかりません。");
+        return recruitment;
+    }
     private static Object assignRecruitment(Connection c, User user, String recruitmentId, JsonNode body) throws Exception {
         role(user,"leader");
-        Map<String,Object> recruitment=one(c,"SELECT a.*,p.leader_id,p.sales_id,p.name AS project_name,p.notes,su.display_name AS sales_name FROM recruitments a JOIN projects p ON p.id=a.project_id JOIN app_users su ON su.id=p.sales_id WHERE a.id=? FOR UPDATE OF a",recruitmentId);
-        require(recruitment!=null,404,"面談者の選定依頼が見つかりません。");
+        Map<String,Object> recruitment=recruitment(c,recruitmentId);
         require(user.id.equals(str(recruitment,"leader_id")),403,"この案件の面談者は選定できません。");
         require(str(recruitment,"status").equals("pending"),409,"この依頼の面談者はすでに選定されています。");
         require(body.size()==1 && body.has("studentIds"),400,"選定する面談者だけを指定してください。");
@@ -933,6 +972,60 @@ public final class DealHunterServer {
         execute(c,"UPDATE recruitments SET status='assigned',assigned_at=now() WHERE id=?",recruitmentId);
         var salesPreview=preview(c,projectId,str(recruitment,"sales_id"),"lark","面談者の選定が完了",List.of(line("メンション","@"+str(recruitment,"sales_name")),line("案件",str(recruitment,"project_name")),line("担当リーダー",user.name),line("面談者",String.join("、",students.values())),line("面談ページ","http://127.0.0.1:3100/sales?request="+issued.ids().getFirst())),"担当リーダーが面談者を選定しました。各面談者の参加可能な日時への回答を待ってください。外部送信は行っていません。");
         return Map.of("message",students.size()+"名を面談者に選定し、各人への依頼を保存しました。","projectId",projectId,"recruitmentId",recruitmentId,"requestId",issued.ids().getFirst(),"requestIds",issued.ids(),"preview",issued.previews().getFirst(),"previews",issued.previews(),"salesPreview",salesPreview);
+    }
+    private static Object cancelInterviewRequest(Connection c, User user, String requestId, JsonNode body) throws SQLException {
+        var request=request(c,user,requestId,"sales");
+        require(body.size()==1 && body.has("revision"),400,"削除する依頼の版を指定してください。");
+        checkResponseVersion(request,body.get("revision"));
+        require(Set.of("requested","responded").contains(str(request,"status")),409,"日時が確定した面談依頼は削除できません。");
+        execute(c,"UPDATE interview_requests SET cancelled_at=now(),task_revision=task_revision+1 WHERE id=?",requestId);
+        return queueCancellation(c,str(request,"project_id"),str(request,"student_id"),str(request,"project_name"),"面談依頼");
+    }
+    private static Object cancelRecruitment(Connection c, User user, String recruitmentId, JsonNode body) throws SQLException {
+        role(user,"sales");
+        var recruitment=recruitment(c,recruitmentId);
+        require(user.id.equals(str(recruitment,"sales_id")),403,"この面談者の選定依頼は操作できません。");
+        require(body.isEmpty(),400,"削除には追加項目を指定できません。");
+        require(str(recruitment,"status").equals("pending"),409,"面談者を選定した依頼は、面談者ごとの依頼を削除してください。");
+        execute(c,"UPDATE recruitments SET cancelled_at=now() WHERE id=?",recruitmentId);
+        return queueCancellation(c,str(recruitment,"project_id"),str(recruitment,"leader_id"),str(recruitment,"project_name"),"面談者の選定依頼");
+    }
+    private static Map<String,Object> queueCancellation(Connection c, String projectId, String recipientId, String project, String kind) throws SQLException {
+        String safeName=project.replace('<','＜').replace('>','＞').replace('\r',' ').replace('\n',' ');
+        String message="DealHunterで"+kind+"が削除されました。\n案件："+safeName+"\nこの依頼への対応は不要です。";
+        execute(c,"INSERT INTO lark_cancellation_notifications(id,project_id,recipient_id,message) VALUES(?,?,?,?)",UUID.randomUUID(),projectId,recipientId,message);
+        return Map.of("message",kind+"を削除しました。","notificationStatus",larkAvailability.canSendMessages()?"queued":"notConfigured");
+    }
+    private static void deliverCancellationNotification() {
+        if(!larkAvailability.canSendMessages()) return;
+        try {
+            Map<String,Object> notification;
+            // Claim with a retry lease in an autocommit statement before performing any network I/O.
+            try (var c=connect()) {
+                notification=one(c,"""
+                    WITH next AS (
+                        SELECT n.id,u.email FROM lark_cancellation_notifications n JOIN app_users u ON u.id=n.recipient_id
+                        WHERE n.sent_at IS NULL AND n.next_attempt_at<=now()
+                        AND (n.project_id IS NULL OR EXISTS (
+                            SELECT 1 FROM projects p WHERE p.id=n.project_id FOR KEY SHARE SKIP LOCKED
+                        ))
+                        ORDER BY n.next_attempt_at,n.id LIMIT 1 FOR UPDATE OF n SKIP LOCKED
+                    )
+                    UPDATE lark_cancellation_notifications n
+                    SET attempts=n.attempts+1,next_attempt_at=now()+make_interval(secs=>least(3600,60*(1<<least(n.attempts,6))))
+                    FROM next WHERE n.id=next.id RETURNING n.id,n.message,COALESCE(next.email,'') AS email
+                    """);
+            }
+            if(notification==null) return;
+            larkAvailability.sendText(str(notification,"email"),str(notification,"message"),str(notification,"id"));
+            try (var c=connect()) {
+                execute(c,"UPDATE lark_cancellation_notifications SET sent_at=now() WHERE id=? AND sent_at IS NULL",notification.get("id"));
+            }
+        } catch(LarkAvailability.UnavailableException ex) {
+            // Keep the recipient and delivery ID on the pending record for the scheduled retry.
+        } catch(SQLException | RuntimeException ex) {
+            System.err.println("Unable to process the Lark cancellation notification queue.");
+        }
     }
     private static Object respondRequest(Connection c, User user, String requestId, JsonNode body) throws Exception {
         Map<String,Object> r = request(c,user,requestId,"student");
@@ -1634,7 +1727,13 @@ public final class DealHunterServer {
                         }
                         c.commit(); respond(exchange,200,response); return;
                     }
+                    if(path.matches("/api/projects/[A-Za-z0-9_-]+/delete")) {
+                        require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
+                        Object response=deleteProject(c,user,path.split("/")[3],readBody(exchange,1024));
+                        c.commit(); respond(exchange,200,response); return;
+                    }
                     boolean assignmentRoute=path.matches("/api/recruitments/[^/]+/assign");
+                    boolean recruitmentCancellationRoute=path.matches("/api/recruitments/[^/]+/cancel");
                     require(!user.role.equals("leader") || !method.equals("POST") || assignmentRoute,403,"リーダーが更新できるのは担当案件の面談者選定だけです。");
                     if(path.equals("/api/dashboard")) {
                         require(!user.role.equals("admin"),403,"業務画面は営業・エンジニア・リーダーが利用できます。");
@@ -1645,15 +1744,17 @@ public final class DealHunterServer {
                     if(path.matches("/api/requests/[^/]+/attachment") && method.equals("GET")) {
                         downloadAttachment(c,user,path.split("/")[3],exchange); c.commit(); return;
                     }
-                    require(path.equals("/api/requests") || path.equals("/api/requests/group-confirm") || path.matches("/api/requests/[^/]+/(respond|confirm|reopen)")
-                        || path.matches("/api/requests/[^/]+/attachment") || assignmentRoute || path.matches("/api/events/[^/]+/(feedback|entry|entry-check|acknowledge|result|next-round|notice|notice-read)") || path.matches("/api/tasks/[^/]+/acknowledge"),404,"エンドポイントが見つかりません。");
+                    require(path.equals("/api/requests") || path.equals("/api/requests/group-confirm") || path.matches("/api/requests/[^/]+/(respond|confirm|reopen|cancel)")
+                        || path.matches("/api/requests/[^/]+/attachment") || assignmentRoute || recruitmentCancellationRoute || path.matches("/api/events/[^/]+/(feedback|entry|entry-check|acknowledge|result|next-round|notice|notice-read)") || path.matches("/api/tasks/[^/]+/acknowledge"),404,"エンドポイントが見つかりません。");
                     require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
                     JsonNode body=readBody(exchange,8*1024*1024);
                     Object response;
                     String[] parts=path.split("/");
                     if(path.equals("/api/requests")) response=createRequest(c,user,body);
                     else if(path.equals("/api/requests/group-confirm")) response=groupConfirm(c,user,body);
+                    else if(recruitmentCancellationRoute) response=cancelRecruitment(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("recruitments") && parts[4].equals("assign")) response=assignRecruitment(c,user,parts[3],body);
+                    else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("cancel")) response=cancelInterviewRequest(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("respond")) response=respondRequest(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("confirm")) response=confirmRequest(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("reopen")) response=reopenRequest(c,user,parts[3],body);

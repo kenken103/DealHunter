@@ -11,6 +11,8 @@ param(
     [switch]$SalesSharing,
     [switch]$EngineerStatus,
     [switch]$RequestDrafts,
+    [switch]$RequestCancellation,
+    [switch]$ProjectDeletion,
     [switch]$Stop,
     [string]$TestRoot
 )
@@ -94,9 +96,9 @@ $testPassword = [Guid]::NewGuid().ToString('N')
 $manifestPath = Join-Path $TestRoot 'processes.json'
 $manifest = @{ testRoot = $TestRoot; postgresBin = $PostgresBin; postgresStarted = $false; javaId = $null; postgresPort = $PostgresPort; apiPort = $ApiPort; apiKeyPath = $keyPath; backendPath = $backend }
 function Save-Manifest { $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8 }
-function Start-TestJava {
+function Start-TestJava([switch]$LarkFixture) {
     $classPath = "$classes;$(Join-Path $projectRoot 'backend/lib/*')"
-    $mainClass = if ($InterviewerAvailability) { 'LarkAvailabilityHarness' } else { 'DealHunterServer' }
+    $mainClass = if ($InterviewerAvailability -or $LarkFixture) { 'LarkAvailabilityHarness' } else { 'DealHunterServer' }
     $process = Start-Process -FilePath (Join-Path $JavaHome 'bin/java.exe') -ArgumentList @('-cp', "`"$classPath`"", $mainClass, "`"$backend`"") -WorkingDirectory $TestRoot -WindowStyle Hidden -RedirectStandardOutput (Join-Path $TestRoot 'api.log') -RedirectStandardError (Join-Path $TestRoot 'api-error.log') -PassThru
     $manifest.javaId = $process.Id
     $manifest.javaStartTicks = $process.StartTime.ToUniversalTime().Ticks
@@ -129,7 +131,7 @@ $succeeded = $false
 try {
     foreach ($entry in $environment.GetEnumerator()) { $oldEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, 'Process'); [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') }
     $sources = @(Get-ChildItem -Path (Join-Path $projectRoot 'backend/src/*.java') -File | ForEach-Object { $_.FullName })
-    if ($InterviewerAvailability) { $sources += Join-Path $projectRoot 'backend/test/LarkAvailabilityHarness.java' }
+    if ($InterviewerAvailability -or $RequestCancellation) { $sources += Join-Path $projectRoot 'backend/test/LarkAvailabilityHarness.java' }
     & (Join-Path $JavaHome 'bin/javac.exe') -encoding UTF-8 --release 21 -cp (Join-Path $projectRoot 'backend/lib/*') -d $classes @sources
     if ($LASTEXITCODE -ne 0) { throw 'Isolated Java compilation failed.' }
     & (Join-Path $PostgresBin 'initdb.exe') -D $pgData --username=dealhunter --encoding=UTF8 --locale=C "--pwfile=$passwordPath" --auth-local=scram-sha-256 --auth-host=scram-sha-256
@@ -171,6 +173,19 @@ try {
         Start-TestJava
         & node (Join-Path $projectRoot 'backend/verify-request-drafts.mjs')
         if ($LASTEXITCODE -ne 0) { throw 'Interview request draft verification failed.' }
+    } elseif ($RequestCancellation) {
+        $verification = Join-Path $projectRoot 'backend/verify-request-cancellation.mjs'
+        Start-TestJava
+        & node $verification
+        if ($LASTEXITCODE -ne 0) { throw 'Interview request cancellation verification failed.' }
+        Stop-TestJava $manifest
+        Start-TestJava -LarkFixture
+        & node $verification --persisted
+        if ($LASTEXITCODE -ne 0) { throw 'Lark cancellation delivery and restart verification failed.' }
+    } elseif ($ProjectDeletion) {
+        Start-TestJava
+        & node (Join-Path $projectRoot 'backend/verify-project-deletion.mjs')
+        if ($LASTEXITCODE -ne 0) { throw 'Project deletion verification failed.' }
     } elseif ($EngineerStatus) {
         Start-TestJava
         & node (Join-Path $projectRoot 'backend/verify-engineer-status.mjs')

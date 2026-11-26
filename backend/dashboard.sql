@@ -3,7 +3,7 @@ visible_projects AS (
  SELECT p.* FROM projects p CROSS JOIN viewer v
  WHERE v.role IN('admin','sales') OR (v.role='student' AND (
  EXISTS(SELECT 1 FROM scheduled_events e WHERE e.project_id=p.id AND e.student_id=v.id)
- OR EXISTS(SELECT 1 FROM interview_requests r WHERE r.project_id=p.id AND r.student_id=v.id)
+ OR EXISTS(SELECT 1 FROM interview_requests r WHERE r.project_id=p.id AND r.student_id=v.id AND r.cancelled_at IS NULL)
  OR EXISTS(SELECT 1 FROM project_import_history h WHERE h.project_id=p.id AND h.student_id=v.id)))
  OR (v.role='leader' AND p.leader_id=v.id)
 ),
@@ -13,7 +13,7 @@ visible_events AS (
 ),
 visible_requests AS (
  SELECT r.* FROM interview_requests r JOIN visible_projects p ON p.id=r.project_id CROSS JOIN viewer v
- WHERE v.role IN('sales','leader','admin') OR r.student_id=v.id
+ WHERE r.cancelled_at IS NULL AND (v.role IN('sales','leader','admin') OR r.student_id=v.id)
 ),
 visible_import_history AS (
  SELECT h.* FROM project_import_history h JOIN visible_projects p ON p.id=h.project_id CROSS JOIN viewer v
@@ -21,7 +21,7 @@ visible_import_history AS (
 ),
 visible_recruitments AS (
  SELECT a.* FROM recruitments a JOIN visible_projects p ON p.id=a.project_id CROSS JOIN viewer v
- WHERE v.role IN('sales','leader','admin')
+ WHERE a.cancelled_at IS NULL AND v.role IN('sales','leader','admin')
 ),
 tasks AS (
  SELECT t.*,a.acknowledged_at FROM active_tasks t JOIN visible_projects p ON p.id=t.project_id CROSS JOIN viewer v
@@ -68,7 +68,7 @@ SELECT jsonb_build_object(
  'primeCompany',p.prime_company,'category',p.category,'remarks',CASE WHEN v.role IN('sales','admin') THEN p.remarks ELSE '' END,'executorName',p.executor_name,'followerNames',to_jsonb(p.follower_names),'totalRounds',p.total_rounds,
  'scheduleMode',a.schedule_mode,'requestedDates',to_jsonb(a.requested_dates),
  'candidates',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',s.id,'start',to_char(s.start_at,'YYYY-MM-DD"T"HH24:MI'),'end',to_char(s.end_at,'YYYY-MM-DD"T"HH24:MI')) ORDER BY s.start_at,s.id) FROM recruitment_candidate_slots s WHERE s.recruitment_id=a.id),'[]'::jsonb),
- 'studentIds',COALESCE((SELECT jsonb_agg(r.student_id ORDER BY r.student_id) FROM interview_requests r WHERE r.recruitment_id=a.id),'[]'::jsonb),
+ 'studentIds',COALESCE((SELECT jsonb_agg(r.student_id ORDER BY r.student_id) FROM visible_requests r WHERE r.recruitment_id=a.id),'[]'::jsonb),
  'attachment',CASE WHEN v.role IN('sales','admin') THEN (SELECT jsonb_build_object('name',f.filename,'size',octet_length(f.content),'scope','project') FROM project_attachments f WHERE f.project_id=p.id) ELSE NULL END
  ) ORDER BY a.created_at,a.id) FROM visible_recruitments a JOIN projects p ON p.id=a.project_id LEFT JOIN app_users lu ON lu.id=p.leader_id CROSS JOIN viewer v),'[]'::jsonb),
  'requests',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',r.id,'projectId',p.id,'project',p.name,'summary',p.notes,'studentId',r.student_id,'person',u.display_name,'status',r.status,'scheduleMode',r.schedule_mode,'requestedDates',to_jsonb(r.requested_dates),'confirmedSlotId',r.confirmed_slot_id,'leaderId',p.leader_id,'leaderName',lu.display_name,'participantName',p.participant_name,'participantNameKana',p.participant_name_kana,'upperCompany',p.upper_company,'endCompany',p.end_company,'attachment',CASE WHEN v.role='leader' THEN NULL ELSE COALESCE((SELECT jsonb_build_object('name',a.filename,'size',octet_length(a.content),'scope','project') FROM project_attachments a WHERE a.project_id=p.id),(SELECT jsonb_build_object('name',a.filename,'size',octet_length(a.content),'scope','request') FROM request_attachments a WHERE a.request_id=r.id)) END,

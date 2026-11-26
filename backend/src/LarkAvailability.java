@@ -9,7 +9,7 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-/** Reads calendar occupancy. No event details or calendar results are persisted. */
+/** Uses the configured Lark app for calendar occupancy and direct notifications. */
 final class LarkAvailability {
     enum Status { FREE, BUSY, UNKNOWN }
     static class UnavailableException extends RuntimeException {
@@ -67,6 +67,47 @@ final class LarkAvailability {
         } catch (IOException | RuntimeException invalid) {
             return new LarkAvailability(api, "", "", null, INVALID_CONFIG);
         }
+    }
+
+    boolean canSendMessages() {
+        return configError == null && !appId.isBlank() && !secret.isBlank();
+    }
+
+    String sendText(String email, String message, String notificationId) {
+        if (!canSendMessages()) throw new UnavailableException("Lark通知の連携設定を確認してください。");
+        if (message == null || message.isBlank() || notificationId == null ||
+                !notificationId.matches("[A-Fa-f0-9]{8}(-[A-Fa-f0-9]{4}){3}-[A-Fa-f0-9]{12}")) {
+            throw new UnavailableException("Lark通知の内容を確認できませんでした。");
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(18);
+        String normalizedEmail = email == null ? "" : email.strip().toLowerCase(Locale.ROOT);
+        String openId = null;
+        if (openIds != null) {
+            openId = openIds.get(normalizedEmail);
+        } else if (!normalizedEmail.isBlank() && !normalizedEmail.endsWith("@dealhunter.example")) {
+            try {
+                openId = resolveEmails(List.of(normalizedEmail), deadline).get(normalizedEmail);
+            } catch (UnavailableException e) {
+                throw new UnavailableException("Lark通知の宛先を照合できませんでした。");
+            }
+        }
+        if (openId == null || openId.isBlank()) {
+            throw new UnavailableException("Lark通知の宛先が見つかりませんでした。");
+        }
+
+        JsonNode data;
+        try {
+            String content = JSON.writeValueAsString(Map.of("text", message));
+            data = authorized("im/v1/messages?receive_id_type=open_id",
+                Map.of("receive_id", openId, "msg_type", "text", "content", content, "uuid", notificationId), deadline);
+        } catch (IOException | UnavailableException e) {
+            throw new UnavailableException("Lark通知を送信できませんでした。");
+        }
+        JsonNode messageId = data.path("message_id");
+        if (!messageId.isTextual() || messageId.asText().isBlank()) {
+            throw new UnavailableException("Lark通知の送信結果を確認できませんでした。");
+        }
+        return messageId.asText();
     }
 
     Map<String,Status> check(Map<String,String> emailsById, Instant start, Instant end) {

@@ -403,7 +403,7 @@ export default function Dashboard() {
       {acknowledgeError && <p className="sales-refresh-error" role="alert">{acknowledgeError} <button type="button" className="text-link" onClick={() => { setAcknowledgeError(""); void refresh(); }}>最新の状態を確認</button></p>}
       {view === "engineers" ? <EngineerStatusList role="sales" /> :
         !data ? <div className="board loading-board"><div className="empty-state" role={error ? "alert" : "status"}><strong>{error || "予定を読み込んでいます…"}</strong>{error && <p><button type="button" className="text-link" onClick={() => void refresh()}>もう一度読み込む</button></p>}</div></div> :
-        view === "cases" ? <CasePortfolio data={data} onWorkflow={openWorkflow} onEvent={showEvent} /> :
+        view === "cases" ? <CasePortfolio data={data} onWorkflow={openWorkflow} onEvent={showEvent} onChanged={refresh} /> :
         view === "knowledge" ? <QuestionLibrary data={data} onEvent={showEvent} /> :
         view === "companyLookup" ? <div className="sales-company-lookup-screen"><InterviewerCompanyLookup snapshot={data.projects} /></div> : <div className="board">
           <aside className="rail" aria-label="日付と直近の予定">

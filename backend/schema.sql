@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS pending_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS scheduled_events_date_idx ON scheduled_events(event_date, start_time);
+CREATE INDEX IF NOT EXISTS scheduled_events_project_idx ON scheduled_events(project_id);
 CREATE INDEX IF NOT EXISTS interview_questions_project_idx ON interview_questions(project_id);
 
 CREATE TABLE IF NOT EXISTS app_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
@@ -180,15 +181,18 @@ CREATE TABLE IF NOT EXISTS recruitment_candidate_slots (
  start_at timestamp NOT NULL, end_at timestamp,
  CHECK(end_at IS NULL OR (end_at>start_at AND end_at::date=start_at::date)), UNIQUE(recruitment_id,start_at)
 );
+ALTER TABLE recruitments ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
 CREATE TABLE IF NOT EXISTS interview_requests (
  id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id), student_id text NOT NULL REFERENCES app_users(id),
  status text NOT NULL CHECK (status IN ('requested','responded','confirmed')), confirmed_slot_id text, created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS cancelled_at timestamptz;
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS schedule_mode text NOT NULL DEFAULT 'candidates' CHECK (schedule_mode IN ('candidates','availability'));
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS requested_dates date[] NOT NULL DEFAULT '{}' CHECK (array_position(requested_dates,NULL) IS NULL AND (schedule_mode='availability' OR cardinality(requested_dates)=0));
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS recruitment_id text REFERENCES recruitments(id);
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS interview_round integer NOT NULL DEFAULT 1 CHECK(interview_round BETWEEN 1 AND 5);
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS total_rounds integer NOT NULL DEFAULT 1 CHECK(total_rounds BETWEEN interview_round AND 5);
+CREATE INDEX IF NOT EXISTS interview_requests_project_idx ON interview_requests(project_id);
 CREATE INDEX IF NOT EXISTS interview_requests_recruitment_idx ON interview_requests(recruitment_id) WHERE recruitment_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS request_attachments (
  request_id text PRIMARY KEY REFERENCES interview_requests(id) ON DELETE CASCADE,
@@ -231,10 +235,31 @@ CREATE TABLE IF NOT EXISTS interview_feedback (
 );
 ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS event_id text REFERENCES scheduled_events(id);
 ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS feedback_id text REFERENCES interview_feedback(id);
+CREATE TABLE IF NOT EXISTS lark_cancellation_notifications (
+ id uuid PRIMARY KEY, recipient_id text NOT NULL REFERENCES app_users(id), message text NOT NULL,
+ attempts integer NOT NULL DEFAULT 0, next_attempt_at timestamptz NOT NULL DEFAULT now(), sent_at timestamptz
+);
+ALTER TABLE lark_cancellation_notifications ADD COLUMN IF NOT EXISTS project_id text REFERENCES projects(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS lark_cancellation_project_idx ON lark_cancellation_notifications(project_id);
+CREATE INDEX IF NOT EXISTS lark_cancellation_pending_idx ON lark_cancellation_notifications(next_attempt_at,id) WHERE sent_at IS NULL;
+-- Before its first send attempt the queue timestamp is the same as the source cancellation.
+WITH cancellations AS (
+ SELECT project_id,student_id AS recipient_id,cancelled_at FROM interview_requests WHERE cancelled_at IS NOT NULL
+ UNION ALL
+ SELECT a.project_id,p.leader_id,a.cancelled_at FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE a.cancelled_at IS NOT NULL
+), resolved AS (
+ SELECT n.id,min(s.project_id) AS project_id
+ FROM lark_cancellation_notifications n JOIN cancellations s
+ ON s.recipient_id=n.recipient_id AND s.cancelled_at=n.next_attempt_at
+ WHERE n.project_id IS NULL AND n.attempts=0 AND n.sent_at IS NULL
+ GROUP BY n.id HAVING count(DISTINCT s.project_id)=1
+)
+UPDATE lark_cancellation_notifications n SET project_id=r.project_id FROM resolved r WHERE r.id=n.id;
 CREATE TABLE IF NOT EXISTS notification_previews (
  id text PRIMARY KEY, project_id text NOT NULL REFERENCES projects(id), recipient_id text NOT NULL REFERENCES app_users(id),
  kind text NOT NULL CHECK (kind IN ('lark','calendar')), title text NOT NULL, lines jsonb NOT NULL, body text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS notification_previews_project_idx ON notification_previews(project_id);
 
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS task_revision bigint NOT NULL DEFAULT 1 CHECK (task_revision > 0);
 CREATE TABLE IF NOT EXISTS task_acknowledgements (
@@ -290,7 +315,7 @@ CREATE OR REPLACE VIEW active_tasks AS
  CASE WHEN r.response_kind='unavailable' THEN '候補日時を再調整' ELSE '面談日時を確定' END AS title,
  CASE WHEN r.response_kind='unavailable' THEN '全候補不可の回答です。新しい日程を依頼してください。' ELSE '面談者の回答から日程を選択してください。URLは後から登録できます。' END AS body,
  'schedule' AS action,r.id AS request_id,NULL::text AS event_id,r.task_revision AS revision,NULL::text AS recruitment_id
- FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id WHERE r.status='responded'
+ FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id WHERE r.status='responded' AND r.cancelled_at IS NULL
  UNION ALL
  SELECT 'entry-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'営業','初回入場を登録','合格した案件の集合日時・場所・当日の案内を登録してください。',
  'entry',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
@@ -317,4 +342,4 @@ CREATE OR REPLACE VIEW active_tasks AS
  (e.schedule_state='postponed' OR (e.schedule_state='scheduled' AND (e.meeting_url='' OR (e.prep_start IS NOT NULL AND e.prep_url=''))))
  UNION ALL
  SELECT 'assignment-'||a.id,p.id,p.sales_id,NULL::text,p.name,'面談者未定','リーダー','面談者を選定','担当リーダーが自分の部下から面談者を1名以上選択してください。',
- 'assign',NULL::text,NULL::text,1::bigint,a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE a.status='pending';
+ 'assign',NULL::text,NULL::text,1::bigint,a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE a.status='pending' AND a.cancelled_at IS NULL;

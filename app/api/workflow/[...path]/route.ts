@@ -18,7 +18,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pat
     if (!validOrigin) return NextResponse.json({ error: "この操作はログイン中の画面から行ってください。" }, { status: 403 });
   }
   const route = (await params).path.join("/");
-  if (!/^(requests|requests\/group-confirm|requests\/[A-Za-z0-9_-]+\/(respond|confirm|reopen|attachment)|recruitments\/[A-Za-z0-9_-]+\/assign|events\/[A-Za-z0-9_-]+\/(feedback|entry|entry-check|acknowledge|next-round|result|notice|notice-read)|tasks\/[A-Za-z0-9_-]+\/acknowledge)$/.test(route)) {
+  if (!/^(projects\/[A-Za-z0-9_-]+\/delete|requests|requests\/group-confirm|requests\/[A-Za-z0-9_-]+\/(respond|confirm|reopen|attachment|cancel)|recruitments\/[A-Za-z0-9_-]+\/(assign|cancel)|events\/[A-Za-z0-9_-]+\/(feedback|entry|entry-check|acknowledge|next-round|result|notice|notice-read)|tasks\/[A-Za-z0-9_-]+\/acknowledge)$/.test(route)) {
     return NextResponse.json({ error: "操作が見つかりません。" }, { status: 404 });
   }
   const studentAction = route.endsWith("/respond") || route.endsWith("/feedback") || route.endsWith("/notice-read") || (route.startsWith("events/") && route.endsWith("/acknowledge"));

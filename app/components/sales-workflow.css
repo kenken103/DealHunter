@@ -127,3 +127,15 @@
 @media (max-width: 460px) {
   .sales-mast .topnav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+.sales-cancel-request { margin-bottom: 12px; }
+.sales-secondary.sales-delete-request {
+  min-height: 44px;
+  color: #8b332c;
+  background: #fff;
+  border-color: #cf8d86;
+}
+.sales-secondary.sales-delete-request:hover { background: #fff0f0; }
+.d-button.sales-delete-confirm { background: #a2332a; }
+.d-button.sales-delete-confirm:hover:not(:disabled) { background: #7f2821; }
+.sales-delete-confirm:disabled { opacity: .65; cursor: wait; }

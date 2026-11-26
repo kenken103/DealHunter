@@ -28,7 +28,8 @@ const assignmentOptions = {
   direct: { title: "担当を決めて面談作成", description: "営業が面談者を選び、本人に直接依頼します。" },
   leader: { title: "担当者を後からアサイン", description: "担当リーダーに依頼し、後から面談者を選んでもらいます。" },
 } satisfies Record<AssignmentMode, { title: string; description: string }>;
-type Pending = { path: string; payload: unknown; preview: NotificationPreview; entry?: EntryReview; companyWarnings?: CompanyWarning[] };
+type Pending = { path: string; payload: unknown; preview: NotificationPreview; entry?: EntryReview; companyWarnings?: CompanyWarning[]; cancellation?: true };
+type WorkflowResult = MutationResult & { notificationStatus?: "queued" | "notConfigured" };
 type CompanyInfo = { upperCompany?: string; primeCompany?: string; endCompany?: string; category?: string };
 const trimCompany = (value: string) => value.replace(/^[\p{White_Space}\uFEFF]+|[\p{White_Space}\uFEFF]+$/gu, "");
 const companyLines = (company: CompanyInfo) => [{ label: "上位会社", value: companyNameForDisplay(company.upperCompany) ?? "未登録" }, { label: "元請け", value: company.primeCompany || "未登録" }, { label: "エンド企業", value: companyNameForDisplay(company.endCompany) ?? "未入力" }, { label: "種類", value: company.category || "未登録" }];
@@ -72,7 +73,7 @@ export default function PreviewDialog(props: Props) {
 
 function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, initialDraft, onDraftSaved }: Props & DraftProps & { standalone?: boolean }) {
   const dialog = useRef<HTMLDialogElement>(null), heading = useRef<HTMLHeadingElement>(null), opener = useRef<HTMLElement | null>(null), sequence = useRef(2), savingRef = useRef(false);
-  const [values, setValues] = useState<Values>({}), [slots, setSlots] = useState<DraftSlot[]>([]), [pending, setPending] = useState<Pending | null>(null), [saved, setSaved] = useState<MutationResult | null>(null), [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const [values, setValues] = useState<Values>({}), [slots, setSlots] = useState<DraftSlot[]>([]), [pending, setPending] = useState<Pending | null>(null), [saved, setSaved] = useState<WorkflowResult | null>(null), [saving, setSaving] = useState(false), [error, setError] = useState("");
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [addingUpperCompany, setAddingUpperCompany] = useState(false);
   const [addingEndCompany, setAddingEndCompany] = useState(false);
@@ -99,6 +100,8 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
   const recruitmentProject = data.projects.find(item => item.id === recruitment?.projectId);
   const project = data.projects.find(item => item.id === (request?.projectId ?? event?.projectId ?? recruitment?.projectId));
   const canEdit = active?.kind === "new" || (!!project && project.salesId === data.currentUser.id);
+  const requestToCancel = canEdit && (active?.kind === "request" || active?.kind === "confirm") && request && request.status !== "confirmed" ? request : null;
+  const recruitmentToCancel = canEdit && active?.kind === "recruitment" && recruitment?.status === "pending" ? recruitment : null;
   const leaders = data.leaders ?? [];
   const interviewerOptions = data.students.map(student => {
     const sameName = data.students.some(other => other.id !== student.id && other.name === student.name);
@@ -314,6 +317,27 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
     } finally { savingRef.current = false; setDraftSaving(false); }
   }
 
+  function reviewCancellation() {
+    const target = requestToCancel ?? recruitmentToCancel;
+    if (!target) return;
+    const recipient = requestToCancel?.person ?? recruitmentToCancel?.leaderName ?? "";
+    const targetPath = requestToCancel ? "requests" : "recruitments";
+    setError("");
+    setPending({
+      path: `${targetPath}/${encodeURIComponent(target.id)}/cancel`,
+      payload: requestToCancel ? { revision: requestToCancel.taskRevision } : {},
+      cancellation: true,
+      preview: {
+        title: requestToCancel ? "削除する面談依頼" : "削除する面談者の選定依頼",
+        lines: [
+          { label: "案件", value: target.project },
+          { label: "Lark通知先", value: `${recipient}（${requestToCancel ? "面談者" : "リーダー"}）` },
+          ...(requestToCancel ? [{ label: "面談回", value: `${requestToCancel.round}回目` }] : []),
+        ],
+      },
+    });
+  }
+
   async function save() {
     if (!canEdit) return;
     if (!pending || savingRef.current || draftConflict) return;
@@ -327,7 +351,7 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
         ...(standalone && draft && { draftId: draft.id, draftRevision: draft.revision }),
       };
       const response = await fetch(`/api/workflow/${pending.path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const result = await response.json() as MutationResult & { error?: string; code?: string; entryWarning?: unknown };
+      const result = await response.json() as WorkflowResult & { error?: string; code?: string; entryWarning?: unknown };
       if (!response.ok) {
         if (standalone && draft && response.status === 409 && result.code === "DRAFT_CONFLICT") {
           setDraftConflict(true);
@@ -341,7 +365,9 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
           setError("確認後に同日の入場予定が変わりました。最新の重複内容を確認してください。");
           return;
         }
-        if (response.status === 409 && (active?.kind === "notice" || active?.kind === "confirm")) {
+        if (pending.cancellation && (response.status === 409 || response.status === 404)) {
+          setPending(null); await onSaved();
+        } else if (response.status === 409 && (active?.kind === "notice" || active?.kind === "confirm")) {
           await onSaved(); setPending(null);
         }
         throw new Error(result.error || result.message || "保存できませんでした。入力を確認して再度お試しください。");
@@ -388,9 +414,26 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
         {standalone && !draftConflict && <button className="sales-secondary" type="button" onClick={() => void saveDraft(true)}>一時保存して閉じる</button>}
         <button className="sales-secondary" type="button" onClick={closeWorkflow}>入力を破棄して閉じる</button>
       </div></>;
+  } else if (saved && pending?.cancellation) {
+    kicker = "削除完了"; title = saved.message;
+    body = <>
+      {saved.notificationStatus === "queued" && <p className="sales-success" role="status">Lark通知を送信待ちに登録しました。</p>}
+      {saved.notificationStatus === "notConfigured" && <p className="sales-assignment-note" role="status">Larkが未設定のため通知は未送信です。</p>}
+      <button className="d-button" type="button" onClick={requestClose}>閉じる</button>
+    </>;
   } else if (saved) {
     kicker = "保存完了"; title = saved.message;
     body = <><p className="sales-success" role="status">担当案件に反映しました。</p>{(active?.kind === "new" || active?.kind === "confirm" || active?.kind === "notice") && pending ? <><Preview preview={pending.preview} />{saved.previews?.length ? <details className="sales-recipient-previews"><summary>保存した通知内容（{saved.previews.length}件）</summary>{saved.previews.map((preview, index) => <div key={index}><Preview preview={preview} /></div>)}</details> : saved.preview && <details className="sales-recipient-previews"><summary>保存した通知内容</summary><Preview preview={saved.preview} /></details>}</> : saved.preview && <Preview preview={saved.preview} />}{active?.kind !== "request" && <p className="d-note">通知・カレンダーの内容はローカルで確認できます。Larkへの送信・予定登録は行っていません。</p>}<button className="d-button" type="button" onClick={requestClose}>閉じる</button></>;
+  } else if (pending?.cancellation) {
+    kicker = "削除前の確認"; title = "この依頼を削除しますか？";
+    body = <>
+      <Preview preview={pending.preview} />
+      <p className="d-note">削除すると、相手の画面から依頼が外れます。Larkが設定されている場合は、通知先に削除を連絡します。</p>
+      <div className="sales-dialog-actions">
+        <button className="sales-secondary" type="button" disabled={saving} onClick={() => { setPending(null); setError(""); }}>戻る</button>
+        <button className="d-button sales-delete-confirm" type="button" onClick={save} disabled={saving || !canEdit}>{saving ? "削除しています…" : "削除する"}</button>
+      </div>
+    </>;
   } else if (pending && similarNotice) {
     kicker = "類似案件の確認";
     title = similarNotice.kind === "matches" ? "同じ案件の可能性があります" : "類似案件を確認できませんでした";
@@ -468,7 +511,7 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
       <fieldset className="sales-scheduling"><legend>日程の調整方法</legend><div className="sales-scheduling-options"><label><input type="radio" name="scheduleMode" value="candidates" checked={scheduleMode === "candidates"} disabled={preparing} onChange={() => { setScheduleMode("candidates"); setError(""); }} /><span><strong>候補日時を提示する</strong><small>営業が開始日時を指定し、面談者が選びます。</small></span></label><label><input type="radio" name="scheduleMode" value="availability" checked={scheduleMode === "availability"} disabled={preparing} onChange={() => { setScheduleMode("availability"); setError(""); }} /><span><strong>面談者に空き日時を確認する</strong><small>面談者から参加可能な開始日時を提案してもらいます。</small></span></label></div></fieldset>
       {scheduleMode === "candidates" ? <><p className="sales-field-note">面談の開始日時を入力してください。</p>{slots.map((slot, i) => <fieldset className="sales-slot" key={slot.key}><legend>候補日時 {i + 1}</legend><Field title={`候補 ${i + 1} の開始日時`}><input {...candidateInput(i)} type="datetime-local" required disabled={preparing} /></Field><button type="button" className="text-link" disabled={slots.length <= 1 || preparing} onClick={() => { setDirty(true); setSlots(current => current.filter(item => item.key !== slot.key)); }}>この候補を削除</button></fieldset>)}<button type="button" className="sales-secondary" disabled={preparing} onClick={() => { setDirty(true); setSlots(current => [...current, { key: sequence.current++, start: "" }]); }}>＋ 候補日時を追加</button></> : <fieldset className="sales-requested-dates"><legend>日付の指定（任意）</legend><p className="sales-field-note">カレンダーから複数の日付を選択できます。同じ日付をもう一度押すと解除できます。日付を指定しない場合は、面談者が日付から提案します。</p><MultiDatePicker value={requestedDates} onChange={dates => { setRequestedDates(dates); setDirty(true); }} disabled={preparing} /></fieldset>}
       <button className="d-button" type="submit" disabled={(assignmentMode === "direct" && !data.students.length) || !leaders.length || preparing}>{preparing ? "依頼内容を確認中…" : "依頼内容・Lark通知を確認"}</button></form><p className="d-note">{assignmentMode === "leader" ? "リーダーが面談者を選定した後、各面談者が自分のホームから日程を回答します。" : "各面談者が自分のホームから回答します。"}営業が日時を確定します。URLは後から共有できます。日時は日本時間です。</p>{!leaders.length && <p className="sales-error" role="alert">担当リーダーを取得できません。最新の一覧を読み込んでください。</p>}</>;
-  } else if (active?.kind === "confirm" && request && canEdit) {
+  } else if (active?.kind === "confirm" && request?.status === "responded" && canEdit) {
     title = request.responseKind === "unavailable" ? "候補日時を再調整" : "面談日時を確定";
   } else if (active?.kind === "notice" && event) {
     title = event.scheduleState === "cancelled" ? "中止した面談の記録" : event.result !== "pending" || event.status !== "scheduled" ? "先方評価・次回の準備事項" : "面談日時・案内の管理";
@@ -520,8 +563,11 @@ function SalesWorkflow({ active, data, onClose, onSaved, standalone = false, ini
       {dirty ? "一時保存後に変更があります。" : "一時保存済み。"} 保存日時：{new Date(draft.updatedAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}
     </p>}
     {error && <p className="sales-error" role="alert">{error}</p>}
+    {!pending && !saved && !discardConfirm && (requestToCancel || recruitmentToCancel) && <div className="sales-cancel-request">
+      <button className="sales-secondary sales-delete-request" type="button" onClick={reviewCancellation}>面談依頼を削除</button>
+    </div>}
     {standalone ? <div inert={draftSaving}>{body}</div> : body}
-    {canEdit && active?.kind === "confirm" && request && !saved && <div hidden={Boolean(pending || discardConfirm)}><ConfirmForm key={request.id} request={request} requests={data.requests} onReview={setPending} onError={setError} /></div>}
+    {canEdit && active?.kind === "confirm" && request?.status === "responded" && !saved && <div hidden={Boolean(pending || discardConfirm)}><ConfirmForm key={request.id} request={request} requests={data.requests} onReview={setPending} onError={setError} /></div>}
     {canEdit && active?.kind === "notice" && event && !saved && <div hidden={Boolean(pending || discardConfirm)}><NoticeForm key={event.key} event={event} onReview={setPending} onError={setError} /></div>}
   </div>;
   if (standalone) return <section className="sales-request-page-form">{content}</section>;
