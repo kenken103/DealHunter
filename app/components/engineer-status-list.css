@@ -152,3 +152,16 @@
   .engineer-status-dialog-bar { padding-inline: 14px; }
   .engineer-status-dialog-body { padding: 12px 16px 20px; }
 }
+
+@media (max-width: 650px) {
+  .engineer-status-table { display: block; width: 100%; }
+  .engineer-status-table colgroup, .engineer-status-table thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+  .engineer-status-table tbody { display: block; border-bottom: 2px solid #becde1; }
+  .engineer-status-table tr { display: grid; padding: 10px 12px; grid-template-columns: minmax(0,1fr); gap: 4px; }
+  .engineer-status-table tbody th, .engineer-status-table tbody td { display: block; border: 0; padding: 2px 0; }
+  .engineer-status-table tbody th { background: transparent; }
+  .engineer-status-table .engineer-status-project { width: 100%; justify-content: space-between; min-height: 40px; text-align: left; }
+  .engineer-status-table td[data-label] { display: grid; grid-template-columns: 5em minmax(0,1fr); gap: 8px; }
+  .engineer-status-table td[data-label]::before { content: attr(data-label); color: #526780; font-size: 12px; }
+  .engineer-status-table td.engineer-status-unassigned ~ td { display:none; }
+}

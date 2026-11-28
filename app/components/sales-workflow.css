@@ -101,7 +101,7 @@
   .sales-disclosure > summary { padding: 8px 0; }
 }
 
-@media (min-width: 651px) and (max-width: 1150px) {
+@media (min-width: 651px) and (max-width: 1240px) {
   .sales-mast {
     display: grid;
     grid-template-columns: 1fr auto;
@@ -139,3 +139,10 @@
 .d-button.sales-delete-confirm { background: #a2332a; }
 .d-button.sales-delete-confirm:hover:not(:disabled) { background: #7f2821; }
 .sales-delete-confirm:disabled { opacity: .65; cursor: wait; }
+
+@media (min-width: 651px) {
+  .sales-mast .topnav > button, .sales-mast .account { white-space: nowrap; }
+  .sales-mast .topnav { flex: 1; min-width: 0; justify-content: space-evenly; }
+  .sales-mast .topnav > button { padding-inline: clamp(7px, .8vw, 16px); }
+  .sales-mast { column-gap: clamp(8px, 1.2vw, 22px); }
+}

@@ -66,3 +66,10 @@ main.dh-admin-main{max-width:1460px;margin:0 auto;padding:36px clamp(20px,3vw,48
 .dh-admin-review dd{white-space:pre-wrap}
 .dh-admin-discard{margin-bottom:20px}.dh-admin-discard>.dh-admin-actions{margin-top:15px}
 @media(max-width:760px){.dh-admin-tabs{gap:4px;margin-bottom:22px}.dh-admin-tabs button{flex:1;padding:8px}.dh-admin-field textarea{font-size:16px}.dh-admin-projects:not(.is-detail) .dh-project-editor{display:none}.dh-admin-projects.is-detail .dh-project-list{display:none}.dh-admin-back{display:block;min-height:44px;color:#2447aa;font-size:13px;margin-bottom:8px;cursor:pointer}.dh-admin-projects .dh-admin-user-list{max-height:none}}
+
+.dh-access-tool{margin:14px 0;padding:14px 16px;border:1px solid #c5d2e0;border-radius:6px;background:#fff}
+.dh-access-tool summary{cursor:pointer;font-weight:650;color:#213e85}
+.dh-access-tool p{margin:10px 0;line-height:1.65}
+.dh-access-tool strong{display:block;margin-bottom:8px}
+.dh-account-tools{padding:0 18px 12px}
+.dh-access-tool .dh-admin-edit-fields{display:grid;gap:12px}

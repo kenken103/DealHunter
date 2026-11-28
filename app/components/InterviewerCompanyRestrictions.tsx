@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { trimEndCompany } from "../lib/company-name";
+import { companyComparisonKey, trimEndCompany } from "../lib/company-name";
 import { companyRestrictionReason, isRestricted, loadRestrictionDetails, manualCompanyRoleLabels,
   type CompanyRestrictionDetails, type CompanyRole, type ManualCompanyRole } from "../lib/interviewer-companies";
 export function useCompanyRestrictions(studentId: string) {
@@ -65,7 +65,7 @@ export function RestrictionEditor({ state, companyNames, onUpdated }: {
 
   const ownMark = isRestricted(current.ownRestrictions, "all", company);
   const marks = manualRoles.flatMap(role => current.restrictions[role].map(name => ({
-    role, name, own: current.ownRestrictions[role].includes(name),
+    role, name, own: current.ownRestrictions[role].some(own => companyComparisonKey(own) === companyComparisonKey(name)),
   })));
   async function changeMark(role: ManualCompanyRole, name: string, restricted: boolean) {
     setNotice(undefined);

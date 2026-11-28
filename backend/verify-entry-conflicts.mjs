@@ -35,8 +35,9 @@ async function call(user, route, body, expected = 200) {
   return { status: response.status, data };
 }
 
-const meetingTime = "2032-01-10T13:00";
+let fixtureMinute = 0;
 async function meeting(name, owner = sales, studentId = student, participantName = "同じ参画者表記") {
+  const meetingTime = "2032-01-10T13:" + String(fixtureMinute++).padStart(2, "0");
   const { data: created } = await call(owner, "requests", {
     project: name, summary: "隔離DBの架空案件", upperCompany: "検証用上位", endCompany: "検証用エンド",
     participantName, studentIds: [studentId], leaderId: leader,
@@ -79,7 +80,9 @@ const otherProject = await meeting("試験・別営業の案件", secondSales, s
 const day = "2032-01-20", first = day + "T00:00", last = day + "T23:59";
 assert.equal(await check(base, first), null);
 const { data: firstEntry } = await save(base, first);
-await call(student, `events/${firstEntry.eventId}/acknowledge`, {});
+await call(student, `events/${firstEntry.eventId}/acknowledge`, {revision: 1}, 409);
+// Conflict checks must also include a previously confirmed entry. Seed that state independently of the clock.
+sql("UPDATE scheduled_events SET engineer_confirmed_at=now() WHERE id=:'id';", {id: firstEntry.eventId});
 const before = snapshot(target);
 const equalTime = await check(target, first);
 assert.deepEqual(equalTime.visibleEntries, [{ project: base.name, when: first }]);
@@ -126,6 +129,15 @@ VALUES ('entry-same-project',:'same','student-takahashi','2032-01-24','07:00','e
 ('entry-cancelled',:'other','student-takahashi','2032-01-24','11:00','entry','','','cancelled'),
 ('entry-postponed',:'other','student-takahashi','2032-01-24','11:30','entry','','','postponed');`,
   { same: sameProject.projectId, other: inactive.projectId });
+sql(`INSERT INTO project_import_history(project_id,student_id,source_row,status,entry_date,source_data)
+     VALUES (:'same','student-takahashi',1,'joined','2032-01-24','{}'),
+            (:'other','student-takahashi',2,'joined','2032-01-25','{}');`,
+    {same: sameProject.projectId, other: inactive.projectId});
+const importProbe = await meeting("試験・取込の照合");
+const imported = await check(importProbe, "2032-01-25T10:00");
+assert.deepEqual(imported.visibleEntries, [{project: inactive.name, when: "2032-01-25（時刻未登録）"}]);
+const duplicate = await check(importProbe, "2032-01-24T10:00");
+assert.deepEqual(duplicate.visibleEntries, [{project: sameProject.name, when: "2032-01-24T07:00"}]);
 assert.equal(await check(sameProject, "2032-01-24T10:00"), null);
 await save(sameProject, "2032-01-24T10:00");
 await call(sales, entryRoute(inactive), { result: "rejected" });
@@ -160,6 +172,101 @@ try {
   sql("ALTER DATABASE dealhunter_end_companies_test RESET default_transaction_isolation;");
   sql("DROP TRIGGER slow_test_entry_insert ON scheduled_events; DROP FUNCTION slow_test_entry_insert();");
 }
+
+const attendees = ["entry-qa-engineer-a", "entry-qa-engineer-b"];
+sql(`INSERT INTO app_users(id,display_name,role) VALUES
+    ('entry-qa-engineer-a','検証用面談者甲','student'),('entry-qa-engineer-b','検証用面談者乙','student');`);
+const dashboard = async actor => (await call(actor, "dashboard")).data;
+async function verifyMeetingConflicts() {
+  const day = sql("SELECT ((now() AT TIME ZONE 'Asia/Tokyo')::date+45)::text;");
+  const at = time => day + "T" + time;
+  const { data: group } = await call(sales, "requests", {
+    project: "試験・複数面談者の同時確定", summary: "隔離テスト", upperCompany: "検証会社", participantName: "テスト参画者",
+    studentIds: attendees, leaderId: leader, assignmentMode: "direct", scheduleMode: "candidates",
+    candidates: [{ start: at("09:00"), end: at("14:00") }],
+  });
+  // Confirm the busy engineer second, after the first group member's event and preview have been written.
+  const requests = (await dashboard(sales)).requests.filter(r => r.projectId === group.projectId)
+    .sort((a, b) => a.id < b.id ? -1 : 1);
+  assert.equal(requests.length, 2);
+  for (const r of requests) await call(r.studentId, `requests/${r.id}/respond`, { slotIds: [r.candidates[0].id] });
+  const busy = requests[1];
+  const reserved = await meeting("試験・別担当営業の既存面談", secondSales, busy.studentId);
+  await call(secondSales, `events/${reserved.eventId}/notice`, {
+    revision: 1, start: at("11:00"), end: at("12:00"), prepStart: at("10:00"), reason: "テスト日時へ変更",
+  });
+  const individual = `requests/${busy.id}/confirm`;
+  for (const times of [
+    { start: at("10:00"), end: at("10:15") },                       // Existing briefing vs proposed interview
+    { start: at("12:00"), end: at("12:30"), prepStart: at("11:20") }, // Existing interview vs proposed briefing
+  ]) {
+    const conflict = await call(sales, individual, { slotId: busy.candidates[0].id, ...times }, 409);
+    assert(conflict.data.error.includes(reserved.name));
+  }
+  const requestIds = requests.map(r => r.id);
+  const notices = () => sql("SELECT count(*) FROM notification_previews WHERE project_id=:'id';", { id: group.projectId });
+  const before = notices();
+  const conflict = await call(sales, "requests/group-confirm", { requestIds, start: at("11:30"), end: at("12:30") }, 409);
+  assert(conflict.data.error.includes(reserved.name));
+  const after = await dashboard(sales);
+  assert.equal(after.events.filter(e => e.projectId === group.projectId).length, 0);
+  assert.deepEqual(after.requests.filter(r => r.projectId === group.projectId).map(r => r.status), ["responded", "responded"]);
+  assert.equal(notices(), before);
+  const adjacent = await call(sales, "requests/group-confirm", { requestIds, start: at("12:00"), end: at("12:30") });
+  assert.equal(adjacent.data.eventIds.length, 2, "An adjacent interview can start at the previous end time");
+  console.log("PASS: cross-project interview and briefing collisions, atomic rollback of group confirmations and previews, adjacent time slots.");
+}
+
+async function verifyEntryLifecycle() {
+  const person = attendees[0];
+  const m = await meeting("試験・入場案内と参画終了の訂正", sales, person);
+  // Move only this disposable interview into the past to exercise completed placements through the public workflow.
+  sql("UPDATE scheduled_events SET event_date=(now() AT TIME ZONE 'Asia/Tokyo')::date-7 WHERE id=:'id';", { id: m.eventId });
+  const [entryDay, endDay] = sql("SELECT d-3, d-1 FROM (SELECT (now() AT TIME ZONE 'Asia/Tokyo')::date AS d) q;").split("|");
+  const { data: entry } = await save(m, entryDay + "T09:00");
+  const route = `events/${entry.eventId}`;
+  const exit = `projects/${m.projectId}/exit`;
+  const current = async () => (await dashboard(person)).events.find(e => e.key === entry.eventId);
+  await call(person, route + "/notice-read", { revision: 1 });
+  await call(sales, route + "/entry-change", {
+    revision: 1, scheduleState: "scheduled", when: entryDay + "T10:00", where: "変更後の受付", memo: "変更後の案内", reason: "受付変更",
+  });
+  const revised = await current();
+  assert.equal(revised.noticeRevision, 2);
+  assert.equal(revised.noticeReadAt, null);
+  assert.equal(revised.engineerConfirmedAt, null);
+  assert.deepEqual(revised.changes.map(h => [h.revision, h.meetingPlace, h.start]), [
+    [2, "変更後の受付", entryDay + "T10:00"], [1, "テスト受付", entryDay + "T09:00"],
+  ]);
+  await call(person, route + "/notice-read", { revision: 1 }, 409);
+  await call(person, route + "/acknowledge", { revision: 1 }, 409);
+  await call(person, route + "/notice-read", { revision: 2 });
+  assert.equal((await current()).engineerConfirmedAt, null, "Reading the updated notice must not complete the placement");
+  const end = { studentId: person, endedOn: endDay, reason: "試験契約満了" };
+  await call(sales, exit, end, 409);
+  await call(person, route + "/acknowledge", { revision: 2 });
+  assert((await current()).engineerConfirmedAt);
+  await call(secondSales, exit, end, 403);
+  await call(sales, exit, end);
+  const ended = await current();
+  assert.deepEqual([ended.endedOn, ended.exitReason], [endDay, end.reason]);
+  const correction = { revision: 2, scheduleState: "scheduled", undoCompletion: true, reason: "本人の完了報告を訂正" };
+  await call(sales, route + "/entry-change", correction, 409);
+  const previous = { studentId: person, previousEnd: endDay, previousReason: end.reason };
+  await call(sales, exit, { ...end, ...previous, endedOn: entryDay, reason: "試験・終了日訂正" });
+  await call(sales, exit, { ...previous, resume: true }, 409);
+  await call(sales, exit, { studentId: person, previousEnd: entryDay, previousReason: "試験・終了日訂正", resume: true });
+  await call(sales, route + "/entry-change", correction);
+  const reopened = await current();
+  assert.deepEqual([reopened.endedOn, reopened.engineerConfirmedAt, reopened.noticeReadAt, reopened.noticeRevision], [null, null, null, 3]);
+  assert(reopened.changes[0].reason.includes(correction.reason));
+  await call(person, route + "/acknowledge", { revision: 2 }, 409);
+  await call(person, route + "/acknowledge", { revision: 3 });
+  console.log("PASS: changed entry plan requires current acknowledgment; exit, correction, resumption and entry-completion correction retain the correct history.");
+}
+
+await verifyMeetingConflicts();
+await verifyEntryLifecycle();
 
 if (process.argv.includes("--browser-fixtures")) {
   const booked = await meeting("画面検証・入場登録済");

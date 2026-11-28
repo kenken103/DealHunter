@@ -1,13 +1,16 @@
 "use client";
 
+import { useScreenParam, setScreenParams } from "./screen-params";
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { DashboardData, ImportedCase, InterviewRequest, Project, ScheduleEvent } from "../types";
 import { companyNameForDisplay } from "../lib/company-name";
 import type { PreviewDialogKey } from "./PreviewDialog";
+import { EntryPlan, PlacementExit, entryState } from "./PlacementEditor";
 import { CompanyHistorySearch } from "./CompanyInterviewHistory";
 import { ImportedCaseRecord, importedCaseStage } from "./ImportedCaseRecord";
 import type { CompanyRole } from "../lib/interviewer-companies";
 import { companyRestrictionBadge, useCompanyRestrictions } from "./InterviewerCompanyRestrictions";
+import FeedbackEditHistory from "./FeedbackEditHistory";
 import { inactiveLabel, inactiveMeeting, meetingStatus } from "./MeetingRecord";
 import "./case-workflow.css";
 
@@ -27,7 +30,7 @@ export function InterviewHistory({ data, projectId, studentId, onEvent }: { data
   if (!meetings.length) return <p className="case-muted">面談はまだ確定していません。</p>;
   return <ol className="case-history">{meetings.map(meeting => {
     const feedback = data.feedbacks.find(item => item.eventId === meeting.key);
-    return <li key={meeting.key}><div className="case-history-heading"><strong>面談 {meeting.round || 1}/{meeting.totalRounds || 1}</strong><span>{meetingStatus(meeting)}</span></div><p>{inactiveMeeting(meeting) ? "変更前：" : ""}{dateTime(meeting)}</p>{onEvent && <button type="button" className="text-link" onClick={() => onEvent(meeting)}>この面談を見る</button>}<details><summary>面談URL・所感・質問</summary>{!inactiveMeeting(meeting) && /^https?:\/\//i.test(meeting.url) && <p><a className="sales-url" href={meeting.url} target="_blank" rel="noopener noreferrer">面談URLを開く</a></p>}{feedback ? <><FactList rows={[["業務内容", feedback.duties], ["作業工程", feedback.process], ["リモート頻度", feedback.remote], ["所感", feedback.impression]]} />{feedback.questions.length > 0 && <div className="case-history-questions"><strong>聞かれた質問</strong><ul>{feedback.questions.map((question, index) => <li key={index}>{question}</li>)}</ul></div>}</> : <p className="case-muted">所感は未提出です。</p>}</details></li>;
+    return <li key={meeting.key}><div className="case-history-heading"><strong>面談 {meeting.round || 1}/{meeting.totalRounds || 1}</strong><span>{meetingStatus(meeting)}</span></div><p>{inactiveMeeting(meeting) ? "変更前：" : ""}{dateTime(meeting)}</p>{onEvent && <button type="button" className="text-link" onClick={() => onEvent(meeting)}>この面談を見る</button>}<details><summary>面談URL・所感・質問</summary>{!inactiveMeeting(meeting) && /^https?:\/\//i.test(meeting.url) && <p><a className="sales-url" href={meeting.url} target="_blank" rel="noopener noreferrer">面談URLを開く</a></p>}{feedback ? <><FactList rows={[["業務内容", feedback.duties], ["作業工程", feedback.process], ["リモート頻度", feedback.remote], ["所感", feedback.impression]]} />{feedback.questions.length > 0 && <div className="case-history-questions"><strong>聞かれた質問</strong><ul>{feedback.questions.map((question, index) => <li key={index}>{question}</li>)}</ul></div>}<FeedbackEditHistory feedback={feedback} /></> : <p className="case-muted">所感は未提出です。</p>}</details></li>;
   })}</ol>;
 }
 
@@ -55,7 +58,8 @@ function CardCompanies({ upperCompany, primeCompany, endCompany, badge }: Pick<P
 
 function stageOf(row: CaseRow) {
   const entry = row.events.find(event => event.entry);
-  if (entry) return entry.engineerConfirmedAt ? "参画（入場済み）" : "初回入場予定";
+  if (row.imported?.endedOn) return "参画終了";
+  if (entry) return entryState(entry);
   if (row.request && row.request.status !== "confirmed") {
     const label = row.request.responseKind === "unavailable" ? "全候補不可・再調整待ち" : row.request.status === "responded" ? "日時確定待ち" : "日程回答待ち";
     return `面談 ${row.request.round || 1}/${row.request.totalRounds || 1} ${label}`;
@@ -66,20 +70,30 @@ function stageOf(row: CaseRow) {
   return row.imported ? importedCaseStage(row.imported) : row.request ? "日程調整中" : "面談未登録";
 }
 function stageGroup(row: CaseRow) {
+  if (row.imported?.endedOn || row.events.some(e => e.endedOn)) return "closed";
   if (row.imported && !row.request && !row.events.length) {
     return { joined: "active", declined: "closed", rejected: "closed", unknown: "unknown" }[row.imported.status];
   }
   if (!row.request && !row.events.length) return "unknown";
   const stage = stageOf(row);
-  return stage.includes("入場済み") ? "active" : /見送り|辞退|中止/.test(stage) ? "closed" : "open";
+  return stage.includes("入場済み") ? "active" : /見送り|辞退|中止|取消|参画終了/.test(stage) ? "closed" : "open";
 }
 export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: { data: DashboardData; onWorkflow: (key: PreviewDialogKey) => void; onEvent: (event: ScheduleEvent) => void; onChanged: () => Promise<void> }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const [myCasesOnly, setMyCasesOnly] = useState(false);
+  const [search, setSearch] = useScreenParam("caseQuery");
+  const [status, setStatus] = useScreenParam("caseStatus", "all");
+  const [mine, setMine] = useScreenParam("own");
+  const myCasesOnly = mine === "1";
+  const setMyCasesOnly = (value: boolean) => setMine(value ? "1" : "");
   const [selectedKey, setSelectedKey] = useState("");
   const [detailView, setDetailView] = useState<"preview" | "open" | "closed">("preview");
-  const [personId, setPersonId] = useState("");
+  const [personId, setPersonId] = useScreenParam("historyPerson");
+  const advancedTools = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 651px)");
+    const sync = () => { if (advancedTools.current) advancedTools.current.open = media.matches; };
+    sync(); media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -114,7 +128,7 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
   const listRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLElement | null>(null);
   const backToList = useCallback(() => {
-    setDetailView("closed");
+    setDetailView("closed"); setScreenParams({project: null, interviewer: null});
     requestAnimationFrame(() => {
       const card = selectedCard.current?.isConnected ? selectedCard.current : listRef.current?.querySelector<HTMLButtonElement>("[aria-pressed=true]");
       card?.scrollIntoView({ block: "center" });
@@ -186,7 +200,7 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
       const target = event.target;
       if (!(target instanceof Element) || detailRef.current?.contains(target) ||
         target.closest(".case-portfolio-list > button, dialog") || document.getSelection()?.isCollapsed === false) return;
-      if (target.closest("a, button, input, select, textarea, label, summary")) setDetailView("closed");
+      if (target.closest("a, button, input, select, textarea, label, summary")) { setDetailView("closed"); setScreenParams({project:null, interviewer:null}); }
       else backToList();
     }
     function dismissOnEscape(event: KeyboardEvent) {
@@ -201,6 +215,7 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
   }, [detailView, backToList]);
 
   function returnToFilteredList() {
+    setScreenParams({project: null, interviewer: null});
     setDetailView(current => current === "open" ? "preview" : current);
   }
   const rows = new Map<string, CaseRow>();
@@ -255,6 +270,24 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
     matchesSearch(item.project, item.leaderName, item)
   );
   const hasCases = allRows.length > 0 || pending.length > 0;
+  const [linkedProject] = useScreenParam("project");
+  const [linkedPerson] = useScreenParam("interviewer");
+  const handledProject = useRef("");
+  useEffect(() => {
+    if (!linkedProject) {
+      if (handledProject.current) setDetailView("closed");
+      handledProject.current = "";
+      return;
+    }
+    const key = linkedProject + ":" + linkedPerson;
+    if (handledProject.current === key) return;
+    handledProject.current = key;
+    const item = pending.find(recruitment => recruitment.projectId === linkedProject);
+    if (item) { onWorkflow({kind: "recruitment", recruitmentId: item.id}); return; }
+    const row = allRows.find(item => item.project.id === linkedProject && (!linkedPerson || item.studentId === linkedPerson));
+    if (row) { setSelectedKey(row.key); setDetailView("open"); requestAnimationFrame(() => detailRef.current?.scrollIntoView({block: "nearest"})); }
+  }, [linkedProject, linkedPerson, data]);
+
 
   function changeStatus(nextStatus: string) {
     setStatus(nextStatus);
@@ -267,14 +300,14 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
     if (row && status !== "all" && status !== stageGroup(row)) setStatus("all");
     if (myCasesOnly && projects.get(projectId)?.salesId !== salesId) setMyCasesOnly(false);
     selectedCard.current = null;
-    setSearch(""); setSelectedKey(key); setDetailView("open");
+    setScreenParams({caseQuery: null, project: projectId, interviewer: studentId}, true); setSelectedKey(key); setDetailView("open");
     requestAnimationFrame(() => {
       detailRef.current?.scrollIntoView({ block: "start" });
       detailRef.current?.focus({ preventScroll: true });
     });
   }
   return <section className="case-portfolio" aria-label="面談者ごとの案件管理">
-    <div className="case-portfolio-tools">
+    <details ref={advancedTools} className="case-portfolio-tools case-extra-tools"><summary>取引先と面談者の履歴を検索</summary>
       <div className="case-portfolio-history">
         <div className="case-portfolio-toolbar"><label>履歴を確認する面談者
           <select value={personId} onChange={event => selectPerson(event.target.value)}>
@@ -283,12 +316,12 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
         </label></div>
         <CompanyHistorySearch data={data} onSelect={showCase} person={personId} personName={personName} badge={badge} />
       </div>
-    </div>
+    </details>
     <div className="case-portfolio-filters">
       <div className="case-portfolio-toolbar">
         <label>案件・面談者を検索<input ref={caseSearch} type="search" value={search} onChange={e => { setSearch(e.target.value); returnToFilteredList(); }} placeholder="案件名・氏名・会社・種類" /></label>
         <label>状態<select value={status} onChange={e => changeStatus(e.target.value)}>
-          <option value="all">すべて</option><option value="open">対応中</option><option value="active">参画（入場済み）</option><option value="closed">見送り・辞退・中止</option><option value="unknown">結果未登録</option>
+          <option value="all">すべて</option><option value="open">対応中</option><option value="active">参画（入場済み）</option><option value="closed">終了・見送り・辞退・中止</option><option value="unknown">結果未登録</option>
         </select></label>
       </div>
       <div className="case-portfolio-quick-filters">
@@ -316,7 +349,7 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
     <div className={`case-portfolio-columns${detailView === "open" ? " is-detail" : detailView === "closed" ? " is-list-only" : ""}`}>
       <div ref={listRef} className="case-portfolio-list" aria-label="案件一覧">
         {filtered.map(row => <button type="button" key={row.key} className={selected?.key === row.key ? "is-selected" : ""} aria-pressed={selected?.key === row.key} onClick={e => {
-          selectedCard.current = e.currentTarget; setSelectedKey(row.key); setDetailView("open");
+          selectedCard.current = e.currentTarget; handledProject.current = row.key; setScreenParams({project:row.project.id, interviewer:row.studentId}, true); setSelectedKey(row.key); setDetailView("open");
           requestAnimationFrame(() => { detailRef.current?.scrollIntoView({ block: "start" }); detailRef.current?.focus({ preventScroll: true }); });
         }}>
           <span className="case-card-top">
@@ -349,8 +382,11 @@ export default function CasePortfolio({ data, onWorkflow, onEvent, onChanged }: 
             </button>}
             {canEdit && latest && !inactiveMeeting(latest) && !entry && (latest.result === "pending" || latest.result === "offered") && <button type="button" className="sales-secondary" onClick={() => onWorkflow({ kind: "entry", eventId: latest.key })}>面談結果・入場予定を登録</button>}
             {canEdit && latest && !inactiveMeeting(latest) && !entry && latest.result === "pending" && (latest.round || 1) < 5 && <button type="button" className="sales-secondary" onClick={() => onWorkflow({ kind: "next-round", eventId: latest.key })}>通過・次回面談を依頼</button>}
-            {entry && <button type="button" className="sales-secondary" onClick={() => onEvent(entry)}>初回入場の記録を見る</button>}
+            {entry && entry.scheduleState === "scheduled" && <button type="button" className="sales-secondary" onClick={() => onEvent(entry)}>初回入場の記録を見る</button>}
           </div>
+          {entry && <EntryPlan key={entry.key + entry.noticeRevision} entry={entry} editable={canEdit} onChanged={onChanged} />}
+          {(entry?.endedOn || selected.imported?.endedOn) && <p>参画終了日　{entry?.endedOn || selected.imported?.endedOn}　{entry?.exitReason || selected.imported?.exitReason}</p>}
+          {canEdit && selected.studentId && (entry?.engineerConfirmedAt || selected.imported?.status === "joined") && <PlacementExit key={selected.key + (entry?.endedOn || selected.imported?.endedOn || "")} projectId={selected.project.id} studentId={selected.studentId} endedOn={entry?.endedOn || selected.imported?.endedOn} reason={entry?.exitReason || selected.imported?.exitReason} onChanged={onChanged} />}
           <section><h3>案件概要</h3><p className="case-body">{selected.project.notes || "未登録"}</p></section>
           {selected.imported && <section><h3>面談・入場の記録</h3><ImportedCaseRecord record={selected.imported} /></section>}
           {(selected.events.length > 0 || selected.request) && <section><h3>この面談者の面談履歴</h3><InterviewHistory data={data} projectId={selected.project.id} studentId={selected.studentId} onEvent={onEvent} /></section>}

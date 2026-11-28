@@ -226,3 +226,6 @@ main.dh-leader-main{max-width:1510px;padding-bottom:40px;background:#f4f6f9}
   .dh-leader-assignment-actions{flex-direction:column}
   .dh-leader-assignment-actions>button,.dh-leader-assignment form>.dh-leader-assignment-primary{width:100%;min-width:0;justify-self:stretch}
 }
+
+.dh-leader-ng { color: #843223; font-weight: 650; overflow-wrap: anywhere; }
+.dh-leader-team-options small { display: block; }

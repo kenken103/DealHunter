@@ -15,6 +15,7 @@ export function SharedInterviewSlots({ studentId, name, editable = false }: {
   const [draft, setDraft] = useState<Draft>(blank);
   const [editId, setEditId] = useState("");
   const [error, setError] = useState("");
+  const [retryLoad,setRetryLoad] = useState(false);
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const writing = useRef(false);
@@ -32,7 +33,7 @@ export function SharedInterviewSlots({ studentId, name, editable = false }: {
       setError("");
     } catch (err) {
       if (current !== sequence.current) return;
-      setData(null);
+      setRetryLoad(true); setData(null);
       setError(err instanceof Error ? err.message : "共有枠を読み込めませんでした。");
     }
   }, [path, studentId]);
@@ -58,7 +59,7 @@ export function SharedInterviewSlots({ studentId, name, editable = false }: {
     if (writing.current) return;
     writing.current = true;
     const current = ++sequence.current;
-    setSaving(true); setError(""); setNotice("");
+    setSaving(true); setError(""); setNotice(""); setRetryLoad(false);
     try {
       const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(action === "remove" ? { action, id } : { action, id, ...draft }) });
@@ -78,7 +79,7 @@ export function SharedInterviewSlots({ studentId, name, editable = false }: {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (draft.end <= draft.start) { setError("終了時刻は開始時刻より後にしてください。"); return; }
+    if (draft.end <= draft.start) { setRetryLoad(false); setError("終了時刻は開始時刻より後にしてください。"); return; }
     void mutate(editId ? "update" : "add", editId || undefined);
   }
 
@@ -86,7 +87,7 @@ export function SharedInterviewSlots({ studentId, name, editable = false }: {
   return <section className="shared-interview-slots">
     <h3>{editable ? "営業に共有する面談可能枠" : name + "さんの面談可能枠"}</h3>
     <p>今日を含む14日間（日本時間{data && `・${data.fromDate} ～ ${data.throughDate}`}）。案件の日程確定や予約には使われない参考情報です。</p>
-    {error && <p role="alert">{error} <button type="button" onClick={load} disabled={saving}>再読み込み</button></p>}
+    {error && <p role="alert">{error} {retryLoad && <button type="button" onClick={load} disabled={saving}>再読み込み</button>}</p>}
     {notice && <p role="status">{notice}</p>}
     {!data && !error && <p role="status">共有枠を読み込み中…</p>}
     {data && (slots.length ? <ul>{slots.map(slot => <li key={slot.id}>
@@ -95,7 +96,7 @@ export function SharedInterviewSlots({ studentId, name, editable = false }: {
         <button type="button" disabled={saving} onClick={() => { setDraft({ date: slot.date, start: slot.start, end: slot.end }); setEditId(slot.id); setError(""); setNotice(""); }}>変更</button>
         <button type="button" disabled={saving} onClick={() => void mutate("remove", slot.id)}>枠を取り消す</button>
       </span>}
-    </li>)}</ul> : <p><strong>共有枠は未登録です。</strong> 面談の可否は本人に確認してください。</p>)}
+    </li>)}</ul> : <p><strong>共有枠は未登録です。</strong> {editable ? "参加できる日時を下の欄から営業に共有できます。" : "面談の可否は本人に確認してください。"}</p>)}
     {editable && data && <form onSubmit={submit}><fieldset disabled={saving}>
       <legend>{editId ? "登録した枠を変更" : "面談可能枠を追加"}</legend>
       <label>日付<input type="date" required min={data.fromDate} max={data.throughDate} value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></label>

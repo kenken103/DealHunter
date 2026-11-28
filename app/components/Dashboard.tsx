@@ -10,11 +10,12 @@ import EngineerStatusList from "./EngineerStatusList";
 import InterviewerCompanyLookup from "./InterviewerCompanyLookup";
 import QuestionLibrary from "./QuestionLibrary";
 import { salesRequestState } from "./SalesSchedule";
+import { EntryPlan, entryState } from "./PlacementEditor";
 import { inactiveMeeting, meetingStatus } from "./MeetingRecord";
 import { companyNameForDisplay } from "../lib/company-name";
 import { japanDayStamp } from "../lib/business-date";
 import { newInterviewRequestPath } from "../lib/return-path";
-import { useEngineerStatusTab } from "./useEngineerStatusTab";
+import { setScreenParams, useScreenParam } from "./screen-params";
 
 type View = "schedule" | "tasks" | "knowledge" | "cases" | "engineers" | "companyLookup";
 type Filter = "all" | "meet" | "entry";
@@ -51,7 +52,7 @@ type CalendarItem = ScheduleEvent & { mainKey?: string };
 function salesCalendar(events: ScheduleEvent[]): CalendarItem[] {
   const items: CalendarItem[] = [];
   for (const event of events) {
-    if (!event.entry && inactiveMeeting(event)) continue;
+    if (event.scheduleState === "cancelled" || event.scheduleState === "postponed") continue;
     items.push(event);
     if (!event.entry && event.prepStart) {
       const stamp = Date.parse(event.prepStart.slice(0, 10) + "T00:00:00Z");
@@ -113,9 +114,8 @@ export default function Dashboard() {
   const OWNER = data?.currentUser.name || "読み込み中…";
   const [error, setError] = useState("");
   const [acknowledgeError, setAcknowledgeError] = useState("");
-  const [dashboardView, setDashboardView] = useState<Exclude<View, "engineers">>("schedule");
-  const [engineerStatusOpen, setEngineerStatusOpen] = useEngineerStatusTab();
-  const view = engineerStatusOpen ? "engineers" : dashboardView;
+  const [requestedView] = useScreenParam("view", "schedule");
+  const view: View = ["tasks", "knowledge", "cases", "engineers", "companyLookup"].includes(requestedView) ? requestedView as View : "schedule";
   const [filter, setFilter] = useState<Filter>("all");
   const [start, setStart] = useState(() => japanDayStamp());
   const [month, setMonth] = useState(() => monthOf(japanDayStamp()));
@@ -191,7 +191,7 @@ export default function Dashboard() {
     const scheduled = data.events.find(item => item.key === params.get("event"));
     if (requested) {
       const linkedTask = data.tasks.find(item => item.requestId === requested.id && item.action === "schedule");
-      setDashboardView("tasks"); setSelectedTask(linkedTask?.key ?? "");
+      setScreenParams({view: "tasks"}); setSelectedTask(linkedTask?.key ?? "");
       if (linkedTask) void acknowledgeTask(linkedTask, data);
       setDialog({ kind: requested.status === "responded" ? "confirm" : "request", requestId: requested.id });
     } else if (scheduled) {
@@ -258,8 +258,7 @@ export default function Dashboard() {
   }
 
   function selectView(next: View) {
-    if (next !== "engineers") setDashboardView(next);
-    setEngineerStatusOpen(next === "engineers");
+    setScreenParams({ view: next === "schedule" ? null : next, request: null, event: null, project: null }, true);
   }
 
   function changeWindow(stamp: number) {
@@ -330,7 +329,7 @@ export default function Dashboard() {
     const submittedFeedback = data?.feedbacks.find(item => item.eventId === source?.key);
     const entryEvent = entryForInterview(event, allEvents);
     return <>
-      <FileHead reference={`案件詳細　/　${event.projectId}`} title={event.project} status={`${event.route}　${event.entry ? event.engineerConfirmedAt ? "参画（入場済み）" : "初回入場予定" : meetingStatus(event)}`} art={event.projectId === "DH-1027"} />
+      <FileHead reference={`案件詳細　/　${event.projectId}`} title={event.project} status={`${event.route}　${event.entry ? entryState(event) : meetingStatus(event)}`} art={event.projectId === "DH-1027"} />
       <section className="file-section">
         <h3>{event.entry ? "初回入場の予定" : "面談の予定"}</h3>
         <Facts rows={[
@@ -369,6 +368,7 @@ export default function Dashboard() {
         ["面談所感", submittedFeedback ? "提出済み" : "未提出"],
       ]} /><div className="sales-workflow-actions"><button type="button" className="detail-action" onClick={() => showEvent(source)}>元の面談を見る<Icon name="chevright" /></button><button type="button" className="detail-action" onClick={() => openWorkflow({ kind: "feedback", eventId: source.key })}>{submittedFeedback ? "所感・聞かれた質問を見る" : "所感の提出状況を見る"}<Icon name="chevright" /></button></div></section>}
       {!event.entry && <section className="file-section sales-feedback"><h3>面談所感</h3><p className="body-copy">{submittedFeedback ? `${submittedFeedback.person}さんが所感を提出しました。` : "受講者からの所感提出を待っています。"}</p>{submittedFeedback && <p className="body-copy">{submittedFeedback.impression}</p>}<button type="button" className="detail-action" onClick={() => openWorkflow({ kind: "feedback", eventId: event.key })}>{submittedFeedback ? "所感・聞かれた質問を見る" : "提出状況を見る"}<Icon name="chevright" /></button></section>}
+      {event.entry && <div className="file-section"><EntryPlan key={event.key + event.noticeRevision} entry={event} editable={canEdit} onChanged={refresh} /></div>}
       <section className="file-section inspector-questions">
         <h3>この案件の過去質問<span className="question-count">{associated.length}</span></h3>
         {associated.length ? associated.map((q, i) => <details className="query" key={q.key}><summary><span className="q-no">Q{i + 1}</span><strong>{q.title}</strong><Icon name="chevright" /></summary><p>{q.context}</p></details>) : <p className="muted">登録された質問はありません。</p>}

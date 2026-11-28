@@ -56,7 +56,7 @@ if (process.argv.includes("--persisted")) {
       upperCompany: old, endCompany: "検証用・エンド", leaderId: "leader-sato", assignmentMode: "direct",
       studentIds: [first], scheduleMode: "availability", candidates: [] });
     await request(sales, "interviewer-company-restrictions/" + first, { companyRole: "upper", companyName: old, restricted: true });
-    await request("admin-initial", "admin/projects/" + data.projectId, { upperCompany: "検証用・新社名" });
+    await request("admin-initial", "admin/projects/" + data.projectId, { upperCompany: "検証用・新社名", revision: 1 });
   }
   console.log("PASS: persisted availability, cancellation and optional browser fixtures.");
   process.exit(0);

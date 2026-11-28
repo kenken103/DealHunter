@@ -11,6 +11,7 @@ const roles: { id: RegistrationRole; label: string; description: string }[] = [
 ];
 
 export default function RegisterForm() {
+  const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -38,7 +39,7 @@ export default function RegisterForm() {
     try {
       const response = await fetch("/api/auth/register", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), email: normalizedEmail, password, role }),
+        body: JSON.stringify({ name: name.trim(), email: normalizedEmail, password, role, code }),
       });
       const result = await response.json() as { redirectTo?: string; error?: string };
       if (!response.ok) throw new Error(result.error || "登録できませんでした。入力内容を確認してください。");
@@ -53,10 +54,11 @@ export default function RegisterForm() {
     <header className="dh-login-header"><div className="dh-login-header-inner"><Link href="/login" className="dh-login-brand" aria-label="DealHunter ログイン"><img src="/logo.svg" width="38" height="38" alt="" /><span>DealHunter</span></Link><span className="dh-login-header-caption">SES面談・入場管理</span></div></header>
     <main className="dh-login-main">
       <section className="dh-login-card dh-register-card" aria-labelledby="dh-register-title">
-        <div className="dh-login-heading"><p className="dh-login-eyebrow">アカウントを作成</p><h1 id="dh-register-title">新規アカウント登録</h1><p className="dh-login-description">会社のメールアドレスと、現在の役割を登録してください。</p></div>
+        <div className="dh-login-heading"><p className="dh-login-eyebrow">アカウントを作成</p><h1 id="dh-register-title">新規アカウント登録</h1><p className="dh-login-description">社内のDealHunter管理者から招待コードを受け取り、承認されたメールアドレス・役割で登録してください。</p></div>
         <form className="dh-login-form dh-register-form" onSubmit={register} aria-busy={pending}>
           {error && <p id="dh-register-error" className="dh-login-error" role="alert" tabIndex={-1} ref={errorRef}>{error}</p>}
           <fieldset disabled={pending} className="dh-register-fields">
+            <div className="dh-login-field"><label htmlFor="dh-register-code">招待コード</label><input id="dh-register-code" name="code" autoComplete="off" spellCheck={false} value={code} onChange={event => setCode(event.target.value.trim())} minLength={32} maxLength={32} required /></div>
             <div className="dh-login-field"><label htmlFor="dh-register-name">氏名</label><input id="dh-register-name" name="name" autoComplete="name" maxLength={100} value={name} onChange={event => setName(event.target.value)} required placeholder="山田 太郎" /></div>
             <div className="dh-login-field"><label htmlFor="dh-register-email">メールアドレス</label><input id="dh-register-email" name="email" type="email" autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={254} value={email} onChange={event => setEmail(event.target.value)} required placeholder="name@legarea.jp" aria-describedby="dh-register-email-note" /><p className="dh-register-note" id="dh-register-email-note">@legarea.jp のメールアドレスだけ登録できます。</p></div>
             <div className="dh-login-field"><label htmlFor="dh-register-password">パスワード</label><div className="dh-login-password"><input id="dh-register-password" name="password" type={showPassword ? "text" : "password"} autoComplete="new-password" minLength={10} maxLength={128} value={password} onChange={event => setPassword(event.target.value)} required aria-describedby="dh-register-password-note" /><button type="button" aria-label={showPassword ? "パスワードを隠す" : "パスワードを表示"} aria-pressed={showPassword} onClick={() => setShowPassword(current => !current)}>{showPassword ? "隠す" : "表示"}</button></div><p className="dh-register-note" id="dh-register-password-note">10〜128文字で入力してください。</p></div>

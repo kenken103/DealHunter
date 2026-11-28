@@ -9,7 +9,7 @@ export type DraftAttachment = { name: string; contentBase64: string };
 
 export const draftTextFields = [
   "project", "upperCompany", "primeCompany", "endCompany", "category", "remarks", "totalRounds",
-  "summary", "participantName", "participantNameKana", "leaderId",
+  "summary", "participantName", "participantNameKana", "leaderId", "responseDeadline",
 ] as const;
 
 export type RequestDraftContent = {

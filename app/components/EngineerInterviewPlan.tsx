@@ -3,7 +3,7 @@ import type { ScheduleEvent } from "../types";
 export type AgendaPart = "prep" | "main" | "change";
 export type AgendaItem = { event: ScheduleEvent; part: AgendaPart; at: string };
 export const isWithdrawn = (e: ScheduleEvent) => e.scheduleState === "postponed" || e.scheduleState === "cancelled";
-export const stateLabel = (e: ScheduleEvent) => e.scheduleState === "cancelled" ? "面談中止" : "日程再調整中";
+export const stateLabel = (e: ScheduleEvent) => e.scheduleState === "cancelled" ? e.entry ? "初回入場中止" : "面談中止" : "日程再調整中";
 export function updatedAfterInterview(event: ScheduleEvent, archivedAt: string | null | undefined) {
   return Boolean(archivedAt && event.changes.some(change => change.revision > 1 && Date.parse(change.at) >= Date.parse(archivedAt)));
 }

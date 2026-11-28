@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState } from "react";
 import { companyHistoryKeys, companyRoleLabels, type CompanyRole } from "../lib/interviewer-companies";
+import { companyComparisonKey } from "../lib/company-name";
 import { RestrictionEditor, useCompanyRestrictions } from "./InterviewerCompanyRestrictions";
 import "./interviewer-company-lookup.css";
 
@@ -18,7 +19,7 @@ function searchText(text: string) {
 }
 
 function companyKey(role: LookupRole, name: string) {
-  return role + ":" + name;
+  return role + ":" + companyComparisonKey(name);
 }
 
 function readDirectory(response: unknown): Directory {
@@ -37,6 +38,7 @@ function readDirectory(response: unknown): Directory {
       const keys = new Set(companyHistoryKeys(name));
       if (role === "all" && keys.size > 0 && [...keys].every(key => companyChoicesByHistoryKey.has(key))) continue;
       const key = companyKey(role, name);
+      if (companies.has(key)) continue;
       const choice = { key, name, label: name, role, ng: new Set<string>(), historyNg: new Set<string>() };
       companies.set(key, choice);
       for (const historyKey of keys) {
@@ -118,6 +120,7 @@ export default function InterviewerCompanyLookup({ snapshot }: { snapshot: objec
   const [chosen, setChosen] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<LoadResult>();
+  const [ngOnly, setNgOnly] = useState(false);
   const [manualEngineer, setManualEngineer] = useState("");
   const restrictions = useCompanyRestrictions(manualEngineer);
   useEffect(() => {
@@ -148,6 +151,8 @@ export default function InterviewerCompanyLookup({ snapshot }: { snapshot: objec
   const exact = options.filter(choice => searchText(choice.name) === needle);
   const selected = options.find(choice => choice.key === chosen) ?? (options.length === 1 ? options[0] : exact.length === 1 ? exact[0] : undefined);
   const rows = (byCompany ? directory?.engineers : directory?.companies) ?? [];
+
+  const displayed = ngOnly && selected ? rows.filter(row => selected.ng.has(row.key)) : rows;
 
   function changeDirection(next: Direction) {
     if (next === direction) return;
@@ -198,8 +203,9 @@ export default function InterviewerCompanyLookup({ snapshot }: { snapshot: objec
         {selected && <div className="ng-lookup-results">
           <h3>{selected.role && <small>{lookupRoleLabels[selected.role]} </small>}{selected.label}</h3>
           <p className="ng-lookup-totals"><strong>NG {selected.ng.size}</strong> / OK {rows.length - selected.ng.size}</p>
-          {byCompany ? <ResultList rows={rows} selected={selected} title="エンジニア" /> : lookupRoles.map(item => {
-            const companies = rows.filter(row => row.role === item);
+          <label><input type="checkbox" checked={ngOnly} onChange={e => setNgOnly(e.target.checked)} /> NGのみ表示</label>
+          {ngOnly && !displayed.length ? <p role="status">該当するNGはありません。</p> : byCompany ? <ResultList rows={displayed} selected={selected} title="エンジニア" /> : lookupRoles.map(item => {
+            const companies = displayed.filter(row => row.role === item);
             return (item !== "all" || companies.length > 0) && <ResultList key={item} rows={companies} selected={selected} title={lookupRoleLabels[item]} />;
           })}
         </div>}

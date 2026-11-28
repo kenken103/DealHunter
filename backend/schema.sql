@@ -26,6 +26,17 @@ DO $$ BEGIN
 END $$;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email text;
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_hash text;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true;
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS session_version integer NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS account_access_codes (
+    email text NOT NULL,
+    purpose text NOT NULL CHECK(purpose IN ('invite','reset')),
+    approved_role text NOT NULL,
+    token_hash text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    issued_by text REFERENCES app_users(id) ON DELETE SET NULL,
+    PRIMARY KEY (email,purpose)
+);
 ALTER TABLE app_users ADD COLUMN IF NOT EXISTS demo_login_profile text
     CHECK (demo_login_profile IN ('legacy-sales','legacy-student','legacy-leader','workbook'));
 CREATE UNIQUE INDEX IF NOT EXISTS app_users_email_unique_idx ON app_users(lower(email)) WHERE email IS NOT NULL;
@@ -60,6 +71,14 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS remarks text NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS executor_name text NOT NULL DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS follower_names text[] NOT NULL DEFAULT '{}' CHECK(array_position(follower_names,NULL) IS NULL AND cardinality(follower_names)<=30);
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS total_rounds integer NOT NULL DEFAULT 1 CHECK(total_rounds BETWEEN 1 AND 5);
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS edit_revision integer NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS project_handoffs (
+    project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    changed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    changed_by text NOT NULL REFERENCES app_users(id),
+    old_sales_id text NOT NULL, new_sales_id text NOT NULL,
+    old_leader_id text, new_leader_id text
+);
 CREATE INDEX IF NOT EXISTS projects_leader_idx ON projects(leader_id) WHERE leader_id IS NOT NULL;
 
 -- Workbook history may contain only a date, or no date at all. It is not a scheduled event.
@@ -176,6 +195,7 @@ CREATE TABLE IF NOT EXISTS recruitments (
  requested_dates date[] NOT NULL DEFAULT '{}' CHECK(array_position(requested_dates,NULL) IS NULL AND (schedule_mode='availability' OR cardinality(requested_dates)=0)),
  created_at timestamptz NOT NULL DEFAULT now(), assigned_at timestamptz
 );
+ALTER TABLE recruitments ADD COLUMN IF NOT EXISTS ng_review jsonb;
 CREATE TABLE IF NOT EXISTS recruitment_candidate_slots (
  id text PRIMARY KEY, recruitment_id text NOT NULL REFERENCES recruitments(id) ON DELETE CASCADE,
  start_at timestamp NOT NULL, end_at timestamp,
@@ -235,6 +255,17 @@ CREATE TABLE IF NOT EXISTS interview_feedback (
 );
 ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS event_id text REFERENCES scheduled_events(id);
 ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS feedback_id text REFERENCES interview_feedback(id);
+ALTER TABLE interview_feedback ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;
+CREATE TABLE IF NOT EXISTS interview_feedback_drafts (
+ event_id text PRIMARY KEY REFERENCES scheduled_events(id) ON DELETE CASCADE,
+ base_revision integer NOT NULL, version integer NOT NULL, content jsonb NOT NULL,
+ saved_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS interview_feedback_edits (
+ feedback_id text NOT NULL REFERENCES interview_feedback(id) ON DELETE CASCADE,
+ revision integer NOT NULL, edited_at timestamptz NOT NULL DEFAULT now(),
+ reason text NOT NULL, previous jsonb NOT NULL, PRIMARY KEY(feedback_id,revision)
+);
 CREATE TABLE IF NOT EXISTS lark_cancellation_notifications (
  id uuid PRIMARY KEY, recipient_id text NOT NULL REFERENCES app_users(id), message text NOT NULL,
  attempts integer NOT NULL DEFAULT 0, next_attempt_at timestamptz NOT NULL DEFAULT now(), sent_at timestamptz
@@ -275,6 +306,15 @@ CREATE INDEX IF NOT EXISTS task_acknowledgements_project_idx ON task_acknowledge
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS response_kind text NOT NULL DEFAULT 'none'
  CHECK(response_kind IN ('none','available','alternative','unavailable'));
 ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS response_note text NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS response_deadline timestamp;
+ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS response_deadline timestamp;
+ALTER TABLE interview_requests ADD COLUMN IF NOT EXISTS last_reminded_at timestamptz;
+CREATE TABLE IF NOT EXISTS placement_exits (
+ project_id text NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+ student_id text NOT NULL REFERENCES app_users(id), ended_on date NOT NULL,
+ reason text NOT NULL DEFAULT '', updated_by text NOT NULL REFERENCES app_users(id),
+ updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(project_id,student_id)
+);
 ALTER TABLE candidate_slots ADD COLUMN IF NOT EXISTS proposed boolean NOT NULL DEFAULT false;
 ALTER TABLE candidate_slots ADD COLUMN IF NOT EXISTS open_ended boolean NOT NULL DEFAULT false CHECK(NOT open_ended OR end_at IS NULL);
 DO $$ BEGIN
@@ -308,6 +348,8 @@ CREATE TABLE IF NOT EXISTS event_notice_history (
 );
 ALTER TABLE event_notice_history ADD COLUMN IF NOT EXISTS end_at timestamp;
 ALTER TABLE event_notice_history ADD COLUMN IF NOT EXISTS prep_start timestamp;
+ALTER TABLE event_notice_history ADD COLUMN IF NOT EXISTS meeting_place text;
+ALTER TABLE event_notice_history ADD COLUMN IF NOT EXISTS guidance text;
 
 -- One authoritative task definition shared by dashboard reads and acknowledgements.
 CREATE OR REPLACE VIEW active_tasks AS
@@ -317,6 +359,11 @@ CREATE OR REPLACE VIEW active_tasks AS
  'schedule' AS action,r.id AS request_id,NULL::text AS event_id,r.task_revision AS revision,NULL::text AS recruitment_id
  FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id WHERE r.status='responded' AND r.cancelled_at IS NULL
  UNION ALL
+ SELECT 'overdue-'||r.id,p.id,p.sales_id,r.student_id,p.name,u.display_name,'営業','日程回答の期限超過',
+ '本人の回答状況を確認し、必要に応じてリマインドしてください。','schedule',r.id,NULL::text,r.task_revision,NULL::text
+ FROM interview_requests r JOIN projects p ON p.id=r.project_id JOIN app_users u ON u.id=r.student_id
+ WHERE r.status='requested' AND r.cancelled_at IS NULL AND r.response_deadline <= (now() AT TIME ZONE 'Asia/Tokyo')
+ UNION ALL
  SELECT 'entry-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'営業','初回入場を登録','合格した案件の集合日時・場所・当日の案内を登録してください。',
  'entry',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
  WHERE e.kind='meet' AND e.result IN('passed','offered') AND NOT EXISTS(SELECT 1 FROM scheduled_events en WHERE en.parent_event_id=e.id)
@@ -324,11 +371,11 @@ CREATE OR REPLACE VIEW active_tasks AS
  SELECT 'feedback-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'受講者','面談所感の提出待ち','業務内容・工程・リモート頻度・感想・質問の記録を待っています。',
  'feedback',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
  WHERE e.kind='meet' AND e.schedule_state='scheduled' AND e.result='pending' AND NOT EXISTS(SELECT 1 FROM interview_feedback f WHERE f.event_id=e.id)
- AND (e.event_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo')::date OR e.request_id IS NOT NULL)
+ AND e.event_date + COALESCE(e.end_time,e.start_time) <= CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo'
  UNION ALL
  SELECT 'result-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'営業','面談結果・初回入場を登録','受講者から面談所感が届きました。内容を確認し、合否と初回入場の案内を登録してください。',
- 'entry',e.request_id,e.id,1::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id
- WHERE e.kind='meet' AND e.schedule_state='scheduled' AND e.result='pending' AND EXISTS(SELECT 1 FROM interview_feedback f WHERE f.event_id=e.id)
+ 'entry',e.request_id,e.id,f.revision::bigint,NULL::text FROM scheduled_events e JOIN projects p ON p.id=e.project_id JOIN app_users u ON u.id=e.student_id JOIN interview_feedback f ON f.event_id=e.id
+ WHERE e.kind='meet' AND e.schedule_state='scheduled' AND e.result='pending'
  UNION ALL
  SELECT 'notice-'||e.id,p.id,p.sales_id,e.student_id,p.name,u.display_name,'営業',
  CASE WHEN e.schedule_state='postponed' THEN '延期した面談の日程を再調整'

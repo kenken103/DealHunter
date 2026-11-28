@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { japanMinute } from "../lib/business-date";
 import type { CandidateSlot, InterviewRequest } from "../types";
 
 type Mode = "available" | "alternative" | "unavailable";
@@ -59,6 +60,7 @@ export function EngineerAvailability({ request: r, pending, drafts, onSave, slot
     };
     if (picking) {
       payload.slotIds = form.getAll("slots").map(String);
+      if (r.candidates.some(slot => payload.slotIds?.includes(slot.id) && slot.start <= japanMinute())) { setError("過ぎた候補は回答できません。別日時または全候補不可を選べます。"); return; }
       if (!payload.slotIds.length) { setError("参加できる候補を選択してください。"); return; }
     } else if (draft.mode !== "unavailable") {
       const proposals = draft.proposals.map(p => {
@@ -68,6 +70,7 @@ export function EngineerAvailability({ request: r, pending, drafts, onSave, slot
         if (p.span === "range") return { start, end: date + "T" + String(form.get("end-" + p.key) || "") };
         return p.span === "after" ? { start, openEnded: true } : { start };
       });
+      if (proposals.some(p => p.start <= japanMinute())) { setError("現在より後の日時を提案してください。"); return; }
       if (proposals.some(p => p.end && p.end <= p.start)) { setError("終了時刻は開始時刻より後にしてください。"); return; }
       if (new Set(proposals.map(p => p.start)).size !== proposals.length) { setError("同じ開始日時が重複しています。"); return; }
       if (dateOptions.length && proposals.some(p => !dateOptions.includes(p.start.slice(0, 10)))) { setError("指定日以外は「別の日時を提案」で回答してください。"); return; }
@@ -88,9 +91,9 @@ export function EngineerAvailability({ request: r, pending, drafts, onSave, slot
         <label><input type="radio" name="answer-kind" checked={draft.mode === "unavailable"} onChange={() => chooseMode("unavailable")} />{hasSuggested ? "全候補で参加できない" : "参加できる日程がない"}</label>
       </div>
       {picking && <div className="dh-engineer-slots">{r.candidates.filter(s => !s.proposed).map(s => <label key={s.id} className="dh-engineer-slot">
-        <input type="checkbox" name="slots" value={s.id} checked={draft.slots.includes(s.id)}
+        <input type="checkbox" name="slots" value={s.id} disabled={s.start <= japanMinute()} checked={draft.slots.includes(s.id)}
           onChange={e => set(d => ({ ...d, slots: e.target.checked ? [...d.slots, s.id] : d.slots.filter(k => k !== s.id) }))} />
-        <span>{candidateText(s, slotLabel)}</span>
+        <span>{candidateText(s, slotLabel)}{s.start <= japanMinute() ? "（受付終了）" : ""}</span>
       </label>)}</div>}
       {!picking && draft.mode !== "unavailable" && <>
         <div className="dh-engineer-proposals">{draft.proposals.map((p, i) => {
@@ -98,7 +101,7 @@ export function EngineerAvailability({ request: r, pending, drafts, onSave, slot
           return <div key={p.key} className="dh-engineer-proposal"><p>候補 {i + 1}（日本時間）</p>
             <div className="dh-engineer-proposal-fields">
               <label>日付{dateOptions.length ? <select name={"date-" + p.key} ref={ref} value={dateOptions.includes(p.date) ? p.date : dateOptions[0]} onChange={e => edit(p.key, { date: e.target.value })}>
-                {dateOptions.map(d => <option key={d} value={d}>{d}</option>)}</select> : <input ref={ref} required type="date" name={"date-" + p.key} value={p.date} onChange={e => edit(p.key, { date: e.target.value })} />}</label>
+                {dateOptions.map(d => <option key={d} value={d}>{d}</option>)}</select> : <input ref={ref} required type="date" min={japanMinute().slice(0,10)} name={"date-" + p.key} value={p.date} onChange={e => edit(p.key, { date: e.target.value })} />}</label>
               <label>参加できる時間<select value={p.span} onChange={e => edit(p.key, { span: e.target.value as Span })}>
                 <option value="exact">この時刻に開始</option><option value="range">この時間帯の中</option><option value="after">この時刻以降</option></select></label>
               <label>開始時刻<input type="time" required name={"time-" + p.key} value={p.time} onChange={e => edit(p.key, { time: e.target.value })} /></label>

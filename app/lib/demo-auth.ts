@@ -9,7 +9,7 @@ import { accountBackend } from "./account-backend";
 import { isLocalDemoRequest } from "./local-demo";
 import type { UserRole } from "../types";
 
-export type DemoUser = { id: string; name: string; role: UserRole };
+export type DemoUser = { id: string; name: string; role: UserRole; sessionVersion?: number };
 export class LoginRateLimitError extends Error {}
 
 const COOKIE = "dealhunter_demo_session";
@@ -70,7 +70,7 @@ export async function authenticateDemoUser(email: string, password: string): Pro
 export const homeFor = (role: DemoUser["role"]) => role === "admin" ? "/admin" : role === "sales" ? "/sales" : role === "leader" ? "/leader" : "/engineer";
 
 export async function createDemoSession(user: DemoUser) {
-  const token = await new SignJWT({})
+  const token = await new SignJWT({ version: user.sessionVersion ?? 0 })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(user.id)
     .setIssuer(ISSUER)
@@ -99,7 +99,7 @@ export async function getDemoUser(): Promise<DemoUser | null> {
     // Resolve current permissions from PostgreSQL on every request. A prior
     // cookie cannot retain privileges after an administrator changes the role.
     const result = await accountBackend<{ user?: unknown }>(`auth/users/${encodeURIComponent(payload.sub)}`);
-    return result.status === 200 && isUser(result.data.user) ? result.data.user : null;
+    return result.status === 200 && isUser(result.data.user) && (payload.version ?? 0) === (result.data.user.sessionVersion ?? 0) ? result.data.user : null;
   } catch {
     return null;
   }

@@ -63,7 +63,11 @@ async function request(user, endpoint, body, expected = 200, key = apiKey) {
   return data;
 }
 const draft = (label, role = "student", overrides = {}) => ({ name: `${prefix} ${label}`, email: `dh.verify.${runId}.${label}@legarea.jp`, password: testPassword, role, ...overrides });
-const register = (label, role = "student", overrides) => request(null, "/api/auth/register", draft(label, role, overrides), [200, 201]);
+async function invited(body) {
+  const { code } = await request("admin-initial", "/api/admin/users", { purpose: "invite", email: body.email, role: body.role });
+  return { ...body, code };
+}
+const register = async (label, role = "student", overrides) => request(null, "/api/auth/register", await invited(draft(label, role, overrides)), [200, 201]);
 const login = (email, password = testPassword, expected = 200) => request(null, "/api/auth/login", { email, password }, expected);
 const currentUser = id => request(null, `/api/auth/users/${id}`);
 const edit = (admin, id, role, leaderId = null, status = 200) => request(admin, `/api/admin/users/${id}`, { role, leaderId }, status);
@@ -181,6 +185,8 @@ try {
   await request(null, "/api/auth/register", draft("missing-key"), 401, null);
   unchanged(baseline, "Invalid/unauthorized registration changed stored records");
 
+  const blockedDraft = draft("unauthorized", "sales");
+  await request(null, "/api/auth/register", blockedDraft, 400);
   const engineerDraft = draft("engineer");
   let engineer, engineerCookie;
   if (withFrontend) {
@@ -188,7 +194,7 @@ try {
     const rejectedOrigin = await frontRequest("/api/auth/register", { method: "POST", headers: { Origin: "https://untrusted.example", "Content-Type": "application/json" }, body: JSON.stringify(engineerDraft) });
     assert.equal(rejectedOrigin.status, 403, "Registration proxy accepted a foreign Origin");
     assert.equal((await frontRequest("/api/admin/users")).status, 401, "Anonymous admin API was allowed");
-    const registered = await frontMutation("/api/auth/register", engineerDraft);
+    const registered = await frontMutation("/api/auth/register", await invited(engineerDraft));
     engineer = registered.data.user;
     engineerCookie = cookie(registered.response);
     assert.equal(registered.data.redirectTo, "/engineer");
@@ -197,6 +203,19 @@ try {
   const leader = (await register("leader", "leader")).user;
   const sales = (await register("sales", "sales")).user;
   const peer = (await register("peer")).user;
+  const peerEmail = draft("peer").email;
+  const beforeReset = (await login(peerEmail)).user.sessionVersion;
+  await request(peer.id, "/api/admin/users", { purpose: "reset", email: peerEmail }, 403);
+  const recovery = await request(admin, "/api/admin/users", { purpose: "reset", email: peerEmail });
+  const reset = { email: peerEmail, code: recovery.code, password: testPassword };
+  await request(null, "/api/auth/reset-password", reset);
+  await request(null, "/api/auth/reset-password", reset, 400);
+  assert((await login(peerEmail)).user.sessionVersion > beforeReset);
+  await request(admin, "/api/admin/users/" + peer.id, { enabled: false });
+  await login(peerEmail, testPassword, 401);
+  await request(peer.id, "/api/dashboard", undefined, 401);
+  await request(admin, "/api/admin/users/" + peer.id, { enabled: true });
+  await login(peerEmail);
   const alternateDraft = draft("alternate-leader", "leader");
   const alternateLeader = (await register("alternate-leader", "leader", { email: `  ${alternateDraft.email.toUpperCase()}  ` })).user;
   for (const user of [engineer, leader, sales, peer, alternateLeader]) {

@@ -1,4 +1,4 @@
-import { trimEndCompany } from "./company-name";
+import { companyComparisonKey, uniqueCompanyNames } from "./company-name";
 
 export const companyRoleLabels = { upper: "上位会社", prime: "元請け", end: "エンド企業" } as const;
 export type CompanyRole = keyof typeof companyRoleLabels;
@@ -23,7 +23,7 @@ function readNames(value: unknown, role: ManualCompanyRole): string[] {
   if (!value || typeof value !== "object") throw new Error("会社一覧が不正です");
   const list: unknown = Reflect.get(value, role);
   if (!Array.isArray(list) || !list.every(name => typeof name === "string")) throw new Error("会社名が不正です");
-  return [...new Set(list.map(trimEndCompany).filter(Boolean))];
+  return uniqueCompanyNames(list);
 }
 
 function readManualRestrictions(value: unknown): ManualRestrictions {
@@ -61,7 +61,8 @@ export function isRestricted(companies: ManualRestrictions, role: ManualCompanyR
     const keys = companyHistoryKeys(name);
     return companies.all.some(company => companyHistoryKeys(company).some(key => keys.includes(key)));
   }
-  return companies[role].includes(trimEndCompany(name));
+  const key = companyComparisonKey(name);
+  return companies[role].some(company => companyComparisonKey(company) === key);
 }
 
 export function companyRestrictionReason(details: CompanyRestrictionDetails, role: CompanyRole, name: string) {

@@ -59,6 +59,9 @@ const findRequest = (data, id) => { const record = data.requests.find(item => it
 const findEvent = (data, id) => { const record = data.events.find(item => item.key === id); assert(record, "Fixture event missing"); return record; };
 const acknowledge = (user, id, expected = 200) => request(user, `/api/events/${id}/acknowledge`, {}, expected);
 
+// Windows psql -v arguments must remain ASCII even for fixture names containing Japanese or emoji.
+const asciiJson = value => JSON.stringify(value).replace(/[\u007f-\uffff]/g, character => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
 function cleanup(targets, users = []) {
   if (!targets.length && !users.length) return;
   for (const fixture of targets) assert(/^DH-[0-9a-f-]{36}$/.test(fixture.id) && /^Excel workflow verification [0-9a-f-]{36} /.test(fixture.name), "Refusing cleanup of an unidentified project");
@@ -80,8 +83,6 @@ function cleanup(targets, users = []) {
     recruitments: "t.project_id NOT IN(SELECT id FROM cleanup_targets)",
     recruitment_candidate_slots: "t.recruitment_id NOT IN(SELECT id FROM recruitments WHERE project_id IN(SELECT id FROM cleanup_targets))",
   };
-  // Keep psql -v arguments ASCII so Windows command-line encoding cannot alter names.
-  const asciiJson = value => JSON.stringify(value).replace(/[\u007f-\uffff]/g, character => `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`);
   sql(`BEGIN;
 LOCK TABLE ${tables.join(",")} IN SHARE ROW EXCLUSIVE MODE;
 CREATE TEMP TABLE cleanup_targets ON COMMIT DROP AS
@@ -189,7 +190,29 @@ const admin = sql("SELECT id FROM app_users WHERE role='admin' ORDER BY id LIMIT
 assert(admin, "An administrator is required for the management-screen verification");
 const before = fingerprints();
 const privateRemark = `sales-only-${randomUUID()}`;
-const draft = (label, overrides = {}) => ({ project: `${prefix} ${label}`, summary: "Excel workflow integration fixture.", upperCompany: "上位会社確認株式会社", primeCompany: "元請け確認株式会社", endCompany: "エンド確認株式会社", category: "Java", remarks: privateRemark, participantName: "参画者確認用", participantNameKana: "さんかくしゃかくにんよう", assignmentMode: "direct", studentIds: [first], leaderId: leader, scheduleMode: "candidates", candidates: [{ start: "2026-11-09T13:00" }], totalRounds: 1, ...overrides });
+const today = sql("SELECT (now() AT TIME ZONE 'Asia/Tokyo')::date;");
+const future = sql(`SELECT d::date FROM generate_series(:'today'::date+1, :'today'::date+365, interval '1 day') d
+  WHERE NOT EXISTS (SELECT 1 FROM scheduled_events WHERE student_id IN (:'first',:'second')
+    AND schedule_state='scheduled' AND (event_date BETWEEN d::date AND d::date+7 OR prep_start::date BETWEEN d::date AND d::date+7))
+    AND NOT EXISTS (SELECT 1 FROM project_import_history WHERE student_id IN (:'first',:'second') AND status='joined' AND entry_date=d::date+7)
+  ORDER BY d LIMIT 1;`, { today, first, second });
+assert(future, "Could not find a free week for the two fixture interviewers");
+function dayAfter(base, days) {
+  const date = new Date(base + "T00:00:00Z");
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+function elapseEvent(eventId, projectId, studentId, kind, elapsedDay) {
+  const fixture = fixtures.find(item => item.id === projectId);
+  assert(fixture?.name.startsWith(prefix + " "), "Only events of this run's generated cases may be moved");
+  const updated = sql(`UPDATE scheduled_events e SET event_date=:'elapsed'::date FROM projects p
+    WHERE e.id=:'event' AND e.project_id=p.id AND p.id=:'project' AND p.name=(:'name'::jsonb #>> '{}') AND p.sales_id=:'sales'
+      AND e.student_id=:'student' AND e.kind=:'kind' AND e.schedule_state='scheduled'
+      AND e.event_date>:'today'::date AND :'elapsed'::date<:'today'::date RETURNING e.id;`,
+    { event: eventId, project: projectId, name: asciiJson(fixture.name), sales, student: studentId, kind, elapsed: elapsedDay, today });
+  assert.equal(updated, eventId, "Expected exactly the generated future event to have elapsed");
+}
+const draft = (label, overrides = {}) => ({ project: `${prefix} ${label}`, summary: "Excel workflow integration fixture.", upperCompany: "上位会社確認株式会社", primeCompany: "元請け確認株式会社", endCompany: "エンド確認株式会社", category: "Java", remarks: privateRemark, participantName: "参画者確認用", participantNameKana: "さんかくしゃかくにんよう", assignmentMode: "direct", studentIds: [first], leaderId: leader, scheduleMode: "candidates", candidates: [{ start: future+"T13:00", end: future+"T14:00" }], totalRounds: 1, ...overrides });
 const create = (label, overrides) => request(sales, "/api/requests", draft(label, overrides), [200, 201]);
 const result = (user, eventId, value, expected = 200) => request(user, `/api/events/${eventId}/result`, { result: value }, expected);
 const feedback = (user, eventId) => request(user, `/api/events/${eventId}/feedback`, { duties: "API開発", process: "設計・実装", remote: "週2日", impression: "面談回数ごとの履歴を確認しました。", questions: [`Round verification question ${eventId}`] });
@@ -240,7 +263,9 @@ try {
   await request(first, `/api/admin/projects/${created.projectId}`, update, 403);
   await request(admin, `/api/admin/projects/${created.projectId}`, { leaderId: "leader-suzuki" }, 400);
   await request(admin, `/api/admin/projects/${created.projectId}`, { followerNames: "one person" }, 400);
-  await request(admin, `/api/admin/projects/${created.projectId}`, update);
+  await request(admin, `/api/admin/projects/${created.projectId}`, { ...update, revision: 1 });
+  await request(admin, `/api/admin/projects/${created.projectId}`, { revision: 1, executorName: "競合時は保存しない" }, 409);
+  await request(admin, `/api/admin/projects/${created.projectId}`, { revision: 2, upperCompany: "" }, 400);
   metadata((await request(admin, "/api/admin/projects")).projects.find(item => item.id === created.projectId), update);
   for (const user of [sales, first, second, leader]) {
     const visible = await dashboard(user);
@@ -253,8 +278,10 @@ try {
   await request(second, `/api/requests/${firstRequest.id}/respond`, { slotIds: [firstRequest.candidates[0].id] }, 403);
   const firstRound = await confirmRequest(first, firstRequest.id);
   const secondPersonRound = await confirmRequest(second, secondRequest.id);
+  elapseEvent(firstRound.eventId, created.projectId, first, "meet", dayAfter(today, -6));
   await feedback(first, firstRound.eventId);
-  const nextBody = { scheduleMode: "candidates", candidates: [{ start: "2026-11-10T14:00" }], totalRounds: 2 };
+  const roundTwo = dayAfter(future, 1);
+  const nextBody = { scheduleMode: "candidates", candidates: [{ start: roundTwo+"T14:00", end: roundTwo+"T15:00" }], totalRounds: 2 };
   await request(second, `/api/events/${firstRound.eventId}/next-round`, nextBody, 403);
   await request(sales, `/api/events/${firstRound.eventId}/next-round`, { ...nextBody, totalRounds: 1 }, 400);
   await request(sales, `/api/events/${firstRound.eventId}/next-round`, nextBody);
@@ -278,13 +305,14 @@ try {
   metadata(findEvent(salesData, finalRound.eventId), { round: 2, totalRounds: 2 });
   assert(!(await dashboard(second)).events.some(item => item.key === firstRound.eventId || item.key === finalRound.eventId), "A second interviewer received another interviewer's round history");
   assert(!(await dashboard(first)).events.some(item => item.key === secondPersonRound.eventId), "The first interviewer received the other interviewer's event");
+  elapseEvent(finalRound.eventId, created.projectId, first, "meet", dayAfter(today, -3));
   await feedback(first, finalRound.eventId);
   await result(first, finalRound.eventId, "offered", 403);
   await result(sales, finalRound.eventId, "offered");
   assert.equal(findEvent(await dashboard(first), finalRound.eventId).result, "offered");
   assert(!(await dashboard(sales)).events.some(item => item.requestId === firstRequest.id && item.entry), "An offer alone created an entry event");
   await acknowledge(first, finalRound.eventId);
-  const entryBody = { result: "passed", when: "2026-11-16T09:00", where: "統合確認受付", memo: "入場完了は面談者が確認します。" };
+  const entryBody = { result: "passed", when: dayAfter(future, 7)+"T09:00", where: "統合確認受付", memo: "入場完了は面談者が確認します。" };
   await request(second, `/api/events/${finalRound.eventId}/entry`, entryBody, 403);
   const entry = await request(sales, `/api/events/${finalRound.eventId}/entry`, entryBody);
   await request(sales, `/api/events/${finalRound.eventId}/entry`, entryBody, 409);
@@ -296,6 +324,8 @@ try {
   metadata(findEvent(salesData, entry.eventId), { studentId: first, parentEventId: finalRound.eventId, engineerConfirmedAt: null });
   await acknowledge(second, entry.eventId, 403);
   await acknowledge(leader, entry.eventId, 403);
+  await acknowledge(first, entry.eventId, 409);
+  elapseEvent(entry.eventId, created.projectId, first, "entry", dayAfter(today, -1));
   const acknowledged = await acknowledge(first, entry.eventId);
   assert(acknowledged.engineerConfirmedAt, "First entry acknowledgement was not persisted");
   const repeated = await acknowledge(first, entry.eventId);
@@ -307,9 +337,10 @@ try {
     const branch = await create(outcome);
     const branchRequest = (await dashboard(sales)).requests.find(item => item.projectId === branch.projectId);
     const meeting = await confirmRequest(first, branchRequest.id);
+    elapseEvent(meeting.eventId, branch.projectId, first, "meet", dayAfter(today, outcome === "declined" ? -5 : -4));
+    await feedback(first, meeting.eventId);
     if (outcome === "declined") await result(sales, meeting.eventId, "offered");
     await result(sales, meeting.eventId, outcome);
-    await feedback(first, meeting.eventId);
     const data = await dashboard(sales);
     metadata(findEvent(data, meeting.eventId), { result: outcome });
     assert(!data.events.some(item => item.projectId === branch.projectId && item.entry), "A declined/rejected case created a first entry");
@@ -322,7 +353,8 @@ try {
   if (process.argv.includes("--prepare")) {
     const uiRunId = randomUUID();
     const uiAdmin = { name: `Excel UI verification ${uiRunId}`, email: `ui-excel.${uiRunId}@legarea.jp`, password: "Excel-Ui-Only-2026!" };
-    const registered = await request("", "/api/auth/register", { ...uiAdmin, role: "student" }, [200, 201]);
+    const invitation = await request(admin, "/api/admin/users", { purpose: "invite", email: uiAdmin.email, role: "student" });
+    const registered = await request("", "/api/auth/register", { ...uiAdmin, role: "student", code: invitation.code }, [200, 201]);
     assert(registered.user?.id, "Temporary UI account registration failed");
     await request(admin, `/api/admin/users/${registered.user.id}`, { role: "admin", leaderId: null });
     const login = await request("", "/api/auth/login", { email: uiAdmin.email, password: uiAdmin.password });

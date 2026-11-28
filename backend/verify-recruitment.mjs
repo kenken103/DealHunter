@@ -204,6 +204,37 @@ ROLLBACK;`);
   await request(mori, `/api/requests/${datedRequest.id}/respond`, { proposals: [{ start: "2026-12-05T11:00" }] }, 400);
   await request(mori, `/api/requests/${datedRequest.id}/respond`, { proposals: [{ start: "2026-12-04T11:00" }] });
 
+  // Move only newly created fixture dates into the past to simulate a delayed selection.
+  const today = sql("SELECT (now() AT TIME ZONE 'Asia/Tokyo')::date");
+  const future = sql("SELECT (now() AT TIME ZONE 'Asia/Tokyo')::date + 10");
+  for (const allExpired of [false, true]) {
+    const fixed = await create("delayed-fixed-" + allExpired, { upperCompany: prefix+" 固定候補"+allExpired, scheduleMode: "candidates", candidates: [{start: future+"T10:00"}, {start: future+"T13:00"}], responseDeadline: future+"T08:00" });
+    sql(`UPDATE recruitment_candidate_slots SET start_at=start_at-interval '30 days' WHERE recruitment_id=:'id' AND (:'all'::boolean OR start_at::time='10:00');
+        UPDATE projects SET response_deadline=response_deadline-interval '30 days' WHERE id=:'project'`, {id: fixed.recruitmentId, all: String(allExpired), project: fixed.projectId});
+    const result = await assign(sato, fixed.recruitmentId, [taka, yama]);
+    assert.match(result.message, /候補日時.*件を除きました。/);
+    assert.match(result.message, /回答期限を解除/);
+    const received = ownRequests(await dashboard(sales), fixed.projectId);
+    assert.equal(received.length, 2);
+    for (const item of received) {
+      assert.equal(item.responseDeadline, null);
+      assert.equal(item.scheduleMode, allExpired ? "availability" : "candidates");
+      assert.deepEqual(item.candidates.map(slot=>slot.start), allExpired ? [] : [future+"T13:00"]);
+    }
+
+    const dates = await create("delayed-dates-" + allExpired, { upperCompany: prefix+" 指定日"+allExpired, requestedDates: [today, future], responseDeadline: future+"T08:00" });
+    sql(`UPDATE recruitments SET requested_dates=CASE WHEN :'all'::boolean THEN ARRAY[:'today'::date-1] ELSE ARRAY[:'today'::date-1,:'today'::date] END WHERE id=:'id'`, {id: dates.recruitmentId, today, all: String(allExpired)});
+    const assigned = await assign(sato, dates.recruitmentId, [mori]);
+    assert.match(assigned.message, /過ぎた指定日/);
+    const item = ownRequests(await dashboard(mori), dates.projectId)[0];
+    assert.deepEqual(item.requestedDates, allExpired ? [] : [today]);
+    assert.equal(item.responseDeadline, future+"T08:00");
+    if (allExpired) {
+      assert.match(assigned.message, /希望日時を営業に回答/);
+      await request(mori, `/api/requests/${item.id}/respond`, { proposals: [{start:future+"T14:00"}] });
+    }
+  }
+
   const direct = await create("direct", { assignmentMode: "direct", studentIds: [taka] });
   assert.equal(direct.requestIds.length, 1);
   assert(!(await dashboard(sales)).recruitments.some(item => item.projectId === direct.projectId), "Direct flow created an unwanted recruitment");

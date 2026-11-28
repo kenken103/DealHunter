@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { companyNameForDisplay } from "../lib/company-name";
 import type { DashboardData, Question, ScheduleEvent } from "../types";
+import { useScreenParam } from "./screen-params";
 import { meetingDate } from "./MeetingRecord";
 import "./question-library.css";
 
@@ -65,6 +66,8 @@ export default function QuestionLibrary({ data, onEvent }: { data: QuestionSourc
   const [result, setResult] = useState<ProjectGroup[] | null>();
   const [attempt, setAttempt] = useState(0);
   const { questions } = data;
+  const [query, setQuery] = useScreenParam("questionQuery");
+  const [company, setCompany] = useScreenParam("questionCompany");
 
   useEffect(() => {
     if (!questions.length) return;
@@ -86,14 +89,31 @@ export default function QuestionLibrary({ data, onEvent }: { data: QuestionSourc
   }, [questions, attempt]);
 
   if (!questions.length) return <div className="question-library-message">面談後に提出された質問がここに表示されます。</div>;
-  const groups = questionGroups(data, result ?? []);
+  const normalize = (text: string) => text.normalize("NFKC").toLocaleLowerCase("ja").replace(/\s+/gu, "");
+  const needle = normalize(query);
+  const projects = new Map(data.projects.map(project => [project.id, project]));
+  const namesFor = (id: string) => {
+    const project = projects.get(id);
+    return [project?.upperCompany, project?.primeCompany, project?.endCompany].map(value => companyNameForDisplay(value) || "").filter(Boolean);
+  };
+  const companies = [...new Set(questions.flatMap(question => namesFor(question.project)))].sort((a,b) => a.localeCompare(b, "ja"));
+  const matching = questions.filter(question => {
+    const names = namesFor(question.project);
+    return (!company || names.includes(company)) && (!needle || [question.title, question.context, question.tag, projects.get(question.project)?.name, ...names].some(text => normalize(text || "").includes(needle)));
+  });
+  const groups = questionGroups({ ...data, questions: matching }, result ?? []);
   return <section className="question-library" aria-label="案件別の質問">
+    <div className="question-library-filters"><label>質問・案件・会社を検索<input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>
+      <label>会社で絞り込み<select value={company} onChange={e => setCompany(e.target.value)}><option value="">すべての会社</option>{companies.map(name => <option key={name}>{name}</option>)}</select></label>
+      <span role="status">該当 {matching.length}件</span>
+    </div>
+    {!matching.length && <p className="question-library-message">条件に一致する質問はありません。</p>}
     {result === undefined && <p className="question-library-message" role="status">同じ会社の類似案件を確認中です。</p>}
     {result === null && <p className="question-library-message" role="alert">
       類似案件を確認できなかったため、案件別に表示しています。{" "}
       <button type="button" className="text-link" onClick={() => { setResult(undefined); setAttempt(value => value + 1); }}>再読み込み</button>
     </p>}
-    {groups.map(group => <details className="question-project-group" key={group.id}>
+    {groups.map(group => <details className="question-project-group" key={group.id + ":" + !!(needle || company)} open={needle || company ? true : undefined}>
       <summary>
         {group.companyName && <span className="question-group-company">{group.companyName}</span>}
         <strong>{group.name}</strong>

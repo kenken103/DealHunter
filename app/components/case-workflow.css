@@ -274,3 +274,10 @@
   overflow-wrap: anywhere;
 }
 .case-company-row > .interviewer-ng-badge { grid-column: 2; justify-self: start; margin-inline-start: 0; }
+
+.case-extra-tools > summary { padding: 11px 16px; cursor: pointer; color: #214a87; font-weight: 650; }
+@media (max-width: 650px) {
+  .case-portfolio { display: flex; flex-direction: column; }
+  .case-portfolio-filters { order: -2; }
+  .case-extra-tools { order: -1; }
+}

@@ -202,15 +202,22 @@ final class SimilarProjects {
     }
 
     static List<QuestionGroupResult> questionGroups(Connection connection) throws SQLException {
+        return questionGroups(connection, null);
+    }
+
+    static List<QuestionGroupResult> questionGroups(Connection connection, String studentId) throws SQLException {
         List<QuestionProject> projects = new ArrayList<>();
         Corpus summaries = new Corpus();
         String sql = """
                 SELECT p.id, p.notes, p.upper_company, p.prime_company, p.end_company
                 FROM projects p
-                WHERE EXISTS (SELECT 1 FROM interview_questions q WHERE q.project_id=p.id)
-                ORDER BY p.id
-                """;
+                """ + (studentId == null ? " WHERE EXISTS (SELECT 1 FROM interview_questions q WHERE q.project_id=p.id)" : """
+                    WHERE EXISTS (SELECT 1 FROM interview_requests r WHERE r.project_id=p.id AND r.student_id=? AND r.cancelled_at IS NULL)
+                       OR EXISTS (SELECT 1 FROM scheduled_events e WHERE e.project_id=p.id AND e.student_id=?)
+                       OR EXISTS (SELECT 1 FROM project_import_history h WHERE h.project_id=p.id AND h.student_id=?)
+                    """) + " ORDER BY p.id";
         try (var statement = connection.prepareStatement(sql)) {
+            if(studentId != null) for(int index=1; index<=3; index++) statement.setString(index, studentId);
             statement.setQueryTimeout(10);
             statement.setFetchSize(100);
             try (var rows = statement.executeQuery()) {

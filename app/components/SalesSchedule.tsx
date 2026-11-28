@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { CandidateSlot, InterviewRequest, NotificationPreview, ScheduleEvent } from "../types";
-import { dateTimeInput } from "../lib/business-date";
+import { dateTimeInput, japanMinute, responseDeadlineLabel } from "../lib/business-date";
 
 export type ScheduleReview = { path: string; payload: unknown; preview: NotificationPreview };
 type ReviewProps = { onReview: (value: ScheduleReview) => void; onError: (message: string) => void };
@@ -199,13 +199,15 @@ function AvailabilityMatrix({ requests, choices, selectedIds, toggle, start, sel
 }
 
 function ReopenRequest({ request, onReview }: ReviewProps & { request: InterviewRequest }) {
+  const [deadline, setDeadline] = useState("");
   return <details className="sales-disclosure" open={request.responseKind === "unavailable" ? true : undefined}>
     <summary>本人に別の空き日時を依頼する</summary>
     <p className="d-note">現在の回答を取り下げ、{request.person}さんに新しい候補を日付から提案してもらいます。</p>
-    <button type="button" className="sales-secondary" onClick={() => onReview({
-      path: `requests/${encodeURIComponent(request.id)}/reopen`, payload: { revision: request.taskRevision },
+    <label>新しい回答期限（任意）<input type="datetime-local" value={deadline} min={japanMinute()} onChange={e => setDeadline(e.target.value)} /></label>
+    <button type="button" className="sales-secondary" disabled={!!deadline && deadline <= japanMinute()} onClick={() => onReview({
+      path: `requests/${encodeURIComponent(request.id)}/reopen`, payload: { revision: request.taskRevision, responseDeadline: deadline },
       preview: { title: "空き日時を再依頼", lines: [{ label: "案件", value: request.project }, { label: "面談者", value: request.person },
-        { label: "調整方法", value: "日時を指定せず、本人に新しい候補を依頼" }] },
+        { label: "回答期限", value: responseDeadlineLabel(deadline) }, { label: "調整方法", value: "日時を指定せず、本人に新しい候補を依頼" }] },
     })}>再依頼内容を確認</button>
   </details>;
 }

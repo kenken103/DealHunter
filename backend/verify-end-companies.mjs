@@ -55,6 +55,10 @@ function snapshot() {
   return sql(`SELECT jsonb_build_object(${tables.map(table => `'${table}',COALESCE((SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) FROM ${table} t),'[]'::jsonb)`).join(",")})::text;`);
 }
 async function request(user, endpoint, body, expected = 200, apiKey = key) {
+  if (body && user === "admin-initial" && endpoint.startsWith("admin/projects/")) {
+    const id = endpoint.split("/").at(-1);
+    body = { ...body, revision: Number(sql("SELECT edit_revision FROM projects WHERE id=:'projectId';", { projectId: id })) };
+  }
   const response = await fetch(`${api}/api/${endpoint}`, {
     method: body === undefined ? "GET" : "POST",
     headers: { "X-DealHunter-Key": apiKey, ...(user ? { "X-DealHunter-User": user } : {}), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
@@ -68,7 +72,7 @@ const dashboard = user => request(user, "dashboard");
 async function candidates(user = sales) {
   const result = await request(user, "end-companies");
   assert(Array.isArray(result.endCompanies) && result.endCompanies.every(name => typeof name === "string" && name.length > 0), "Candidates must be nonempty company names");
-  assert.equal(new Set(result.endCompanies).size, result.endCompanies.length, "Candidates must be exact-deduplicated");
+  assert.equal(new Set(result.endCompanies.map(name => name.normalize("NFKC"))).size, result.endCompanies.length, "Equivalent character widths must appear once in candidates");
   return result.endCompanies;
 }
 const draft = (label, overrides = {}) => ({ project: `${prefix} ${label}`, summary: "Synthetic company selection verification", upperCompany: "上位会社テスト", leaderId: leader, assignmentMode: "direct", studentIds: [student], scheduleMode: "availability", candidates: [], ...overrides });
@@ -115,8 +119,23 @@ const next = await create("selected-next", { endCompany: (await candidates()).fi
 assert.equal((await project(next.projectId)).endCompany, newName);
 await Promise.all(["duplicate-1", "duplicate-2"].map(label => create(label, { endCompany: `　${newName} ` })));
 assert.equal((await candidates()).filter(name => name === newName).length, 1);
-for (const name of ["ACME", "Acme", "ＡＣＭＥ", "AC ME", "Acme株式会社", "Acme 株式会社"]) await create(name, { endCompany: name });
-for (const name of ["ACME", "Acme", "ＡＣＭＥ", "AC ME", "Acme株式会社", "Acme 株式会社"]) assert((await candidates()).includes(name), "Similar names must remain distinct");
+const companySpellings = ["ＡＣＭＥ", "ACME", "Acme", "AC ME", "Acme株式会社", "Acme 株式会社", "ＡＣＭＥ（東京）"];
+for (const name of companySpellings) {
+  const created = await create(name, { upperCompany: name, endCompany: name });
+  const saved = await project(created.projectId);
+  assert.equal(saved.upperCompany, name);
+  assert.equal(saved.endCompany, name);
+}
+for (const role of ["upper", "end"]) {
+  const names = (await request(sales, "interviewer-company-candidates"))[role];
+  for (const name of companySpellings) assert.equal(names.filter(candidate => candidate.normalize("NFKC") === name.normalize("NFKC")).length, 1);
+}
+const markRoute = "interviewer-company-restrictions/" + student;
+await request(sales, markRoute, { companyRole: "upper", companyName: "ＡＣＭＥ", restricted: true });
+await request(sales, markRoute, { companyRole: "upper", companyName: "ACME", restricted: true });
+assert.deepEqual((await request(sales, markRoute)).ownRestrictions.upper, ["ＡＣＭＥ"]);
+await request(sales, markRoute, { companyRole: "upper", companyName: "ACME", restricted: false });
+assert.deepEqual((await request(sales, markRoute)).ownRestrictions.upper, []);
 const beforeEmpty = await candidates();
 for (const [label, override] of [["omitted", {}], ["empty", { endCompany: "" }], ["whitespace", { endCompany: "\u0085\u00a0\u3000\ufeff" }]]) {
   const result = await create(label, override);
@@ -148,7 +167,7 @@ console.log("PASS: invalid values and injected later-write failure leave no proj
 
 await request(admin, "admin/projects/test-legacy-own", { name: "既存案件別項目編集テスト", endCompany: legacyRaw });
 assert.equal((await project("test-legacy-own")).endCompany, legacyRaw, "Editing other fields must preserve an exact raw legacy name");
-const changedName = "管理編集後エンド株式会社";
+const changedName = "管理編集後ＡＢＣ株式会社";
 await request(admin, `admin/projects/${first.projectId}`, { endCompany: `　${changedName} ` });
 assert.equal((await project(first.projectId)).endCompany, changedName);
 await request(admin, `admin/projects/${first.projectId}`, { endCompany: "" });

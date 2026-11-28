@@ -98,6 +98,12 @@ main.dh-engineer-main{max-width:1510px;padding-bottom:40px}
 .dh-engineer-feedback-form input,.dh-engineer-feedback-form textarea{display:block;border:1px solid #bdc9db;border-radius:3px;padding:9px 11px;font-size:13px;width:100%;min-width:0;background:#fff;margin-top:7px;line-height:1.8;color:#293e60;font-weight:400;resize:vertical}
 .dh-engineer-feedback-form input::placeholder,.dh-engineer-feedback-form textarea::placeholder{color:#92a0b3;font-size:11px}
 .dh-engineer-feedback-form input:focus-visible,.dh-engineer-feedback-form textarea:focus-visible{outline:2px solid #4f75db;outline-offset:2px}
+.dh-engineer-feedback-form fieldset>label.dh-engineer-finished{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px}
+.dh-engineer-finished input[type=checkbox]{width:18px;height:18px;margin:0;flex:none;accent-color:#23498e}
+.dh-engineer-section .feedback-edit-history{margin:12px 0;border-top:1px solid #dbe3ee;padding-top:8px}
+.dh-engineer-section .feedback-edit-history summary{cursor:pointer;padding:7px 0;color:#284d83}
+.dh-engineer-section .feedback-edit-history section{padding:10px 0}
+.dh-engineer-section .feedback-edit-history dd{margin:0 0 6px;white-space:pre-wrap;overflow-wrap:anywhere}
 .dh-engineer-required{font-size:9px;color:#7888a1;border:1px solid #d7dfea;border-radius:2px;margin-left:7px;padding:0 4px;font-weight:500}
 .dh-engineer-question-editor{margin-top:22px;padding-top:19px;border-top:1px solid #d7dde7}
 .dh-engineer-question-editor>h3{margin-bottom:0}

@@ -82,11 +82,13 @@ function InterviewRow({ interview }: { interview: Interview }) {
   </li>;
 }
 
-export default async function EngineerInterviewHistoryPage({ params }: { params: Promise<{ studentId: string }> }) {
+export default async function EngineerInterviewHistoryPage({ params, searchParams }: { params: Promise<{ studentId: string }>; searchParams: Promise<{ q?: string }> }) {
   const { studentId } = await params;
+  const { q } = await searchParams;
+  const query = typeof q === "string" ? q.slice(0,200) : "";
   if (!validEngineerId(studentId)) notFound();
 
-  const historyLink = engineerHistoryLink(studentId);
+  const historyLink = engineerHistoryLink(studentId, query);
   const loginLink = `/login?next=${encodeURIComponent(historyLink)}`;
   const user = await getDemoUser();
   if (!user) redirect(loginLink);
@@ -96,7 +98,7 @@ export default async function EngineerInterviewHistoryPage({ params }: { params:
   if (response.status === 401) redirect(loginLink);
   const history: History | null = response.ok ? await response.json() : null;
   const unavailable = response.status === 403 || response.status === 404;
-  const backLink = engineerStatusLink(user.role);
+  const backLink = engineerStatusLink(user.role, query, studentId);
 
   return <>
     <header className="mast"><div className="engineer-history-mast">

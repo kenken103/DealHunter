@@ -1,0 +1,14 @@
+.placement-panel { margin-block: 12px; min-width: 0; overflow-wrap: anywhere; }
+.placement-panel summary { padding: 9px 0; color: #25468d; font-weight: 650; cursor: pointer; }
+.placement-panel details + details { border-top: 1px solid #d6e0ed; }
+.placement-panel fieldset, .placement-panel form > label { display: grid; gap: 12px; margin: 0; padding: 0; min-width: 0; border: 0; }
+.placement-panel label { display: grid; gap: 4px; font-size: 13px; }
+.placement-panel input, .placement-panel select, .placement-panel textarea {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; font: inherit; color: #193452;
+  background: #fff; border: 1px solid #9aaec9; border-radius: 5px;
+}
+.placement-panel ul { padding-inline-start: 20px; }
+.placement-panel [role=status] { margin-block-start: 8px; }
+@media (max-width: 760px) {
+  .placement-panel input, .placement-panel select, .placement-panel textarea { font-size: 16px; }
+}

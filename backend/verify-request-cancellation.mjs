@@ -14,10 +14,10 @@ const manifest = JSON.parse((await readFile(path.join(root, "processes.json"), "
 assert(manifest.testRoot === root && manifest.apiPort !== 8080 && ![15432, 55432].includes(manifest.postgresPort));
 const key = (await readFile(path.join(root, "api-key"), "utf8")).trim();
 
-function sql(input) {
+function sql(input, variables = []) {
   const result = spawnSync(path.join(manifest.postgresBin, "psql.exe"), [
     "-XqAt", "-h", "127.0.0.1", "-p", String(manifest.postgresPort), "-U", "dealhunter",
-    "-d", database, "-v", "ON_ERROR_STOP=1", "-f", "-",
+    "-d", database, "-v", "ON_ERROR_STOP=1", ...variables, "-f", "-",
   ], { input, encoding: "utf8", windowsHide: true, timeout: 15000 });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
@@ -71,9 +71,10 @@ if (process.argv.includes("--persisted")) {
 
 const dashboard = async actor => (await request(actor, "dashboard")).data;
 const paths = id => "requests/" + id + "/";
+const upcoming = days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10) + "T14:00";
 const create = async (project, options = {}) => (await request(sales, "requests", {
   project, summary: "通知に含めない案件の備考", upperCompany: "テスト上位会社", leaderId: leader,
-  studentIds: [first, second], scheduleMode: "candidates", candidates: [{ start: "2032-09-10T14:00" }], ...options,
+  studentIds: [first, second], scheduleMode: "candidates", candidates: [{ start: upcoming(14) }], ...options,
 })).data;
 const pending = async id => (await dashboard(sales)).requests.find(row => row.id === id);
 async function answer(actor, id) {
@@ -82,8 +83,9 @@ async function answer(actor, id) {
   return pending(id);
 }
 const cancel = (actor, row, statuses = [200]) => request(actor, paths(row.id) + "cancel", { revision: row.taskRevision }, statuses);
+const { data: { code } } = await request("admin-initial", "admin/users", { purpose: "invite", email: "request-cancellation-sales@legarea.jp", role: "sales" });
 const { data: { user: { id: otherSales } } } = await request(null, "auth/register", {
-  name: "別担当営業", email: "request-cancellation-sales@legarea.jp", password: randomUUID(), role: "sales",
+  code, name: "別担当営業", email: "request-cancellation-sales@legarea.jp", password: randomUUID(), role: "sales",
 });
 assert.equal(notices().length, 0);
 const grouped = await create(directName, {
@@ -115,11 +117,12 @@ const simultaneous = await Promise.all([
 ]);
 assert.equal(simultaneous.filter(result => result.status === 200).length, 1, "A request must not be confirmed and cancelled concurrently");
 const previous = await create("取り消しテスト・二次面談", {
-  studentIds: [first], totalRounds: 2, candidates: [{ start: "2024-09-10T13:00" }],
+  studentIds: [first], totalRounds: 2, candidates: [{ start: upcoming(7) }],
 });
 const firstRound = await answer(first, previous.requestId);
 const { data: { eventId } } = await request(sales, paths(firstRound.id) + "confirm", { revision:firstRound.taskRevision, slotId: firstRound.candidates[0].id });
 await cancel(sales, await pending(firstRound.id), [409]);
+sql("UPDATE scheduled_events SET event_date=CURRENT_DATE-1 WHERE id=:'event';", ["-v", "event=" + eventId]);
 await request(sales, "events/" + eventId + "/next-round", { scheduleMode: "availability" });
 const nextRound = await pending(firstRound.id);
 assert.equal(nextRound.round, 2);

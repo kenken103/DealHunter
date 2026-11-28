@@ -40,6 +40,7 @@ public final class DealHunterServer {
     private static final String DATABASE_PASSWORD = env("DEALHUNTER_DATABASE_PASSWORD", "");
     private static final String API_KEY = env("DEALHUNTER_API_KEY", "");
     private static final boolean LOCAL_DEMO = "1".equals(env("DEALHUNTER_LOCAL_DEMO", ""));
+    private static final boolean EARLY_FEEDBACK = LOCAL_DEMO && "1".equals(env("DEALHUNTER_ALLOW_EARLY_FEEDBACK",""));
     private static final String API_VERSION = "workflow-v13";
     private static final int PASSWORD_ITERATIONS = 600_000;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -158,6 +159,12 @@ public final class DealHunterServer {
         while(end>start && companyWhitespace(name.codePointBefore(end))) end-=Character.charCount(name.codePointBefore(end));
         return name.substring(start,end);
     }
+    private static String companyComparisonKey(String name) {
+        return Normalizer.normalize(trimCompanyName(name),Normalizer.Form.NFKC);
+    }
+    private static Set<String> companyNames() {
+        return new TreeSet<>(Comparator.comparing(DealHunterServer::companyComparisonKey));
+    }
     private static boolean companyWhitespace(int codePoint) {
         return Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint) || codePoint==0x85 || codePoint==0xFEFF;
     }
@@ -168,7 +175,7 @@ public final class DealHunterServer {
         if(!trimmed.isEmpty()) execute(c,"INSERT INTO project_end_companies(project_id,name) SELECT ?,? WHERE NOT EXISTS(SELECT 1 FROM project_end_companies WHERE project_id=? AND name=?)",projectId,trimmed,projectId,trimmed);
     }
     private static Map<String,Set<String>> sharedCompanyCandidates(Connection c) throws SQLException {
-        Map<String,Set<String>> companies = Map.of("upper",new TreeSet<>(),"end",new TreeSet<>());
+        Map<String,Set<String>> companies = Map.of("upper",companyNames(),"end",companyNames());
         String sql = """
                 SELECT 'upper' AS company_role,upper_company AS company_name FROM projects
                 UNION SELECT 'end',end_company FROM projects
@@ -176,6 +183,7 @@ public final class DealHunterServer {
                 UNION SELECT r.company_role,r.company_name FROM interviewer_company_restrictions r
                        JOIN app_users u ON u.id=r.student_id AND u.role='student'
                        WHERE r.company_role IN ('upper','end')
+                ORDER BY 1,2
                 """;
         try (PreparedStatement s = prepared(c,sql); ResultSet r = s.executeQuery()) {
             while (r.next()) {
@@ -212,6 +220,7 @@ public final class DealHunterServer {
                         'salesName', sales.display_name, 'entryDate', a.entry_date
                     ) ORDER BY a.entry_date DESC NULLS LAST, p.name, p.id) AS projects
                     FROM assignments a JOIN projects p ON p.id=a.project_id JOIN app_users sales ON sales.id=p.sales_id
+                    WHERE NOT EXISTS(SELECT 1 FROM placement_exits x WHERE x.project_id=a.project_id AND x.student_id=a.student_id)
                     GROUP BY a.student_id
                 )
                 SELECT COALESCE(jsonb_agg(jsonb_build_object('id', r.id, 'name', r.display_name,
@@ -304,8 +313,8 @@ public final class DealHunterServer {
 
     private static Object interviewerCompanyLookup(Connection c) throws SQLException {
         Map<String,Set<String>> companies = new HashMap<>(sharedCompanyCandidates(c));
-        Set<String> primeCompanies = new TreeSet<>();
-        try (PreparedStatement s = prepared(c,"SELECT DISTINCT prime_company FROM projects WHERE prime_company<>''");
+        Set<String> primeCompanies = companyNames();
+        try (PreparedStatement s = prepared(c,"SELECT DISTINCT prime_company FROM projects WHERE prime_company<>'' ORDER BY prime_company");
              ResultSet r = s.executeQuery()) {
             while (r.next()) {
                 String name = trimCompanyName(r.getString("prime_company"));
@@ -313,7 +322,7 @@ public final class DealHunterServer {
             }
         }
         companies.put("prime",primeCompanies);
-        companies.put("all",new TreeSet<>());
+        companies.put("all",companyNames());
         List<Map<String,String>> students = new ArrayList<>();
         try (PreparedStatement s = prepared(c,"SELECT id,display_name FROM app_users WHERE role='student' ORDER BY display_name,id");
              ResultSet r = s.executeQuery()) {
@@ -329,7 +338,7 @@ public final class DealHunterServer {
                 """;
         try (PreparedStatement s = prepared(c,sql); ResultSet r = s.executeQuery()) {
             while (r.next()) {
-                String companyRole = r.getString("company_role"), name = r.getString("company_name");
+                String companyRole = r.getString("company_role"), name = trimCompanyName(r.getString("company_name"));
                 // Include a company whose first restriction appeared during this read.
                 companies.get(companyRole).add(name);
                 restrictions.add(Map.of("studentId",r.getString("student_id"),"companyRole",companyRole,"companyName",name));
@@ -350,22 +359,23 @@ public final class DealHunterServer {
             require(update.isObject() && update.size()==3 && update.path("restricted").isBoolean() && update.path("companyName").isTextual(),400,"会社と設定内容を指定してください。");
             String companyRole=update.path("companyRole").asText();
             String name=trimCompanyName(update.get("companyName").asText());
+            String key=companyComparisonKey(name);
             require(Set.of("end","upper","all").contains(companyRole) && !name.isEmpty(),400,"会社名を指定してください。");
             if(update.get("restricted").asBoolean()) {
                 if (companyRole.equals("all")) require(name.length()<=200,400,"会社名は200文字以内で入力してください。");
                 else require(sharedCompanyCandidates(c).get(companyRole).contains(name),400,"選択した区分の保存済みの会社を指定してください。");
-                execute(c,"INSERT INTO interviewer_company_restrictions(sales_id,student_id,company_role,company_name) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM interviewer_company_restrictions WHERE sales_id=? AND student_id=? AND company_role=? AND company_name=?)",user.id,studentId,companyRole,name,user.id,studentId,companyRole,name);
+                execute(c,"INSERT INTO interviewer_company_restrictions(sales_id,student_id,company_role,company_name) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM interviewer_company_restrictions WHERE sales_id=? AND student_id=? AND company_role=? AND normalize(company_name,NFKC)=?)",user.id,studentId,companyRole,name,user.id,studentId,companyRole,key);
             } else {
-                try (PreparedStatement s=prepared(c,"DELETE FROM interviewer_company_restrictions WHERE sales_id=? AND student_id=? AND company_role=? AND company_name=?",user.id,studentId,companyRole,name)) {
-                    if (s.executeUpdate()==0) require(one(c,"SELECT 1 FROM interviewer_company_restrictions WHERE student_id=? AND company_role=? AND company_name=? LIMIT 1",studentId,companyRole,name)==null,403,"他の営業が登録したNGは解除できません。");
+                try (PreparedStatement s=prepared(c,"DELETE FROM interviewer_company_restrictions WHERE sales_id=? AND student_id=? AND company_role=? AND normalize(company_name,NFKC)=?",user.id,studentId,companyRole,key)) {
+                    if (s.executeUpdate()==0) require(one(c,"SELECT 1 FROM interviewer_company_restrictions WHERE student_id=? AND company_role=? AND normalize(company_name,NFKC)=? LIMIT 1",studentId,companyRole,key)==null,403,"他の営業が登録したNGは解除できません。");
                 }
             }
         }
-        Map<String,Set<String>> names=Map.of("end",new TreeSet<>(),"upper",new TreeSet<>(),"all",new TreeSet<>());
-        Map<String,Set<String>> ownNames=Map.of("end",new TreeSet<>(),"upper",new TreeSet<>(),"all",new TreeSet<>());
-        try(PreparedStatement s=prepared(c,"SELECT company_role,company_name,bool_or(sales_id=?) AS own FROM interviewer_company_restrictions WHERE student_id=? GROUP BY company_role,company_name",user.id,studentId);ResultSet r=s.executeQuery()) {
+        Map<String,Set<String>> names=Map.of("end",companyNames(),"upper",companyNames(),"all",companyNames());
+        Map<String,Set<String>> ownNames=Map.of("end",companyNames(),"upper",companyNames(),"all",companyNames());
+        try(PreparedStatement s=prepared(c,"SELECT company_role,company_name,bool_or(sales_id=?) AS own FROM interviewer_company_restrictions WHERE student_id=? GROUP BY company_role,company_name ORDER BY company_role,company_name",user.id,studentId);ResultSet r=s.executeQuery()) {
             while(r.next()) {
-                String companyRole=r.getString("company_role"),name=r.getString("company_name");
+                String companyRole=r.getString("company_role"),name=trimCompanyName(r.getString("company_name"));
                 names.get(companyRole).add(name);
                 if(r.getBoolean("own")) ownNames.get(companyRole).add(name);
             }
@@ -378,6 +388,17 @@ public final class DealHunterServer {
         try { return LocalDateTime.parse(value); }
         catch (DateTimeParseException e) { throw new ApiError(400, "日時は日本時間の年月日・時刻で入力してください。"); }
     }
+    private static LocalDateTime nowInJapan() {
+        return LocalDateTime.now(ZoneId.of("Asia/Tokyo"));
+    }
+    private static void requireFuture(LocalDateTime time) {
+        require(time != null && time.isAfter(nowInJapan()),400,"現在より後の日時を選んでください（日本時間）。");
+    }
+    private static LocalDateTime responseDeadline(JsonNode body) {
+        LocalDateTime deadline=optionalDate(body,"responseDeadline",null);
+        if(deadline!=null) requireFuture(deadline);
+        return deadline;
+    }
     private static List<LocalDate> requestedDates(JsonNode value) {
         if (value == null) return List.of();
         require(value.isArray(),400,"指定日は日付の一覧で入力してください。");
@@ -388,6 +409,7 @@ public final class DealHunterServer {
             try { day = LocalDate.parse(item.asText()); }
             catch (DateTimeParseException e) { throw new ApiError(400,"指定日が正しくありません。"); }
             require(day.getYear() > 0,400,"指定日が正しくありません。");
+            require(!day.isBefore(nowInJapan().toLocalDate()),400,"指定日は本日以降の日付を選んでください。");
             require(dates.add(day),400,"指定日が重複しています。");
         }
         return List.copyOf(dates);
@@ -407,6 +429,7 @@ public final class DealHunterServer {
         for (JsonNode item : value) {
             require(item.isObject(),400,"候補日時の形式が正しくありません。");
             LocalDateTime start = date(text(item,"start"));
+            requireFuture(start);
             LocalDateTime end = item.hasNonNull("end") ? date(text(item,"end")) : null;
             boolean openEnded = booleanField(item,"openEnded",false);
             require(!openEnded || (proposals && end==null),400,"「以降」を選んだ場合は終了時刻を空にしてください。");
@@ -452,7 +475,7 @@ public final class DealHunterServer {
     }
     private static User authenticate(Connection c, HttpExchange exchange) throws SQLException {
         String userId = exchange.getRequestHeaders().getFirst("X-DealHunter-User");
-        Map<String, Object> row = one(c, "SELECT id,role,display_name FROM app_users WHERE id=?", userId);
+        Map<String, Object> row = one(c, "SELECT id,role,display_name FROM app_users WHERE id=? AND enabled", userId);
         require(row != null, 401, "ログインしてください。");
         return new User(str(row,"id"), str(row,"role"), str(row,"display_name"));
     }
@@ -507,14 +530,14 @@ public final class DealHunterServer {
         require(password.length()>=10 && password.length()<=128,500,"初期管理者パスワードの設定を確認してください。");
         execute(c,"INSERT INTO app_users(id,display_name,role,email,password_hash) VALUES('admin-initial','管理者','admin','admin@legarea.jp',?)",passwordHash(password));
     }
-    private static Map<String,String> publicUser(Map<String,Object> row) {
-        return Map.of("id",str(row,"id"),"name",str(row,"display_name"),"role",str(row,"role"));
+    private static Map<String,Object> publicUser(Map<String,Object> row) {
+        return Map.of("id",str(row,"id"),"name",str(row,"display_name"),"role",str(row,"role"),"sessionVersion",row.get("session_version"));
     }
     private static Object demoLoginAccounts(Connection c) throws SQLException {
         List<Map<String,String>> accounts=new ArrayList<>();
         String sql="""
             SELECT id, display_name, role, email, demo_login_profile FROM app_users
-            WHERE role IN ('sales','student','leader') AND password_hash IS NOT NULL
+            WHERE enabled AND role IN ('sales','student','leader') AND password_hash IS NOT NULL
               AND email LIKE '%@dealhunter.example' AND demo_login_profile IS NOT NULL
               AND (demo_login_profile <> 'workbook' OR ?)
             ORDER BY CASE WHEN id IN ('student-takahashi','leader-sato') THEN 0 ELSE 1 END, display_name, id
@@ -533,24 +556,68 @@ public final class DealHunterServer {
         require(email.length()<=254 && email.matches(atom+"(?:\\."+atom+")*@legarea\\.jp") && email.indexOf('@')<=64,400,"メールアドレスは @legarea.jp のものを入力してください。");
         return email;
     }
+    private static String accessCodeHash(String code) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(code.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException ex) { throw new IllegalStateException(ex); }
+    }
+    private static Object issueAccessCode(Connection c, User admin, JsonNode body) throws SQLException {
+        role(admin,"admin");
+        String purpose=text(body,"purpose");
+        require(Set.of("invite","reset").contains(purpose),400,"発行するコードを選択してください。");
+        String email=registrationEmail(body);
+        Map<String,Object> target=one(c,"SELECT id,role,enabled FROM app_users WHERE lower(email)=? FOR UPDATE",email);
+        String approvedRole;
+        if(purpose.equals("invite")) {
+            require(target==null,409,"登録済みの利用者です。パスワード再設定をご利用ください。");
+            approvedRole=text(body,"role");
+            require(Set.of("student","leader","sales").contains(approvedRole),400,"承認する役割を選択してください。");
+        } else {
+            require(target!=null && Boolean.TRUE.equals(target.get("enabled")),400,"利用中の社内アカウントを指定してください。");
+            approvedRole=str(target,"role");
+        }
+        byte[] bytes=new byte[24]; RANDOM.nextBytes(bytes);
+        String code=Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        execute(c,"INSERT INTO account_access_codes(email,purpose,approved_role,token_hash,expires_at,issued_by) VALUES(?,?,?,?,now()+interval '24 hours',?) ON CONFLICT(email,purpose) DO UPDATE SET approved_role=excluded.approved_role,token_hash=excluded.token_hash,expires_at=excluded.expires_at,issued_by=excluded.issued_by",
+                email,purpose,approvedRole,accessCodeHash(code),admin.id);
+        return Map.of("code",code,"email",email,"purpose",purpose);
+    }
+    private static String consumeCode(Connection c, JsonNode body, String email, String purpose) throws SQLException {
+        String code=text(body,"code");
+        require(code.matches("[A-Za-z0-9_-]{32}"),400,"管理者から受け取ったコードを入力してください。");
+        Map<String,Object> ticket=one(c,"DELETE FROM account_access_codes WHERE email=? AND purpose=? AND token_hash=? AND expires_at>now() RETURNING approved_role",email,purpose,accessCodeHash(code));
+        require(ticket!=null,400,"コード・メールアドレス・有効期限を確認してください。");
+        return str(ticket,"approved_role");
+    }
+    private static Object resetPassword(Connection c, JsonNode body) throws SQLException {
+        String email=registrationEmail(body);
+        JsonNode password=body.get("password");
+        require(password!=null && password.isTextual() && password.asText().length()>=10 && password.asText().length()<=128,400,"パスワードは10〜128文字で入力してください。");
+        execute(c,"SELECT pg_advisory_xact_lock(709032)");
+        consumeCode(c,body,email,"reset");
+        require(one(c,"UPDATE app_users SET password_hash=?,session_version=session_version+1 WHERE lower(email)=? AND enabled RETURNING id",passwordHash(password.asText()),email)!=null,400,"このアカウントを再設定できません。");
+        synchronized(LOGIN_ATTEMPTS) { LOGIN_ATTEMPTS.remove(email); }
+        return Map.of("message","パスワードを変更しました。新しいパスワードでログインしてください。");
+    }
     private static Object registerUser(Connection c, JsonNode body) throws SQLException {
-        require(body.size()==4 && body.has("name") && body.has("email") && body.has("password") && body.has("role"),400,"氏名・メールアドレス・パスワード・役割を指定してください。");
+        require(body.size()<=5 && body.has("name") && body.has("email") && body.has("password") && body.has("role"),400,"氏名・メールアドレス・パスワード・役割を指定してください。");
         String name=text(body,"name"), email=registrationEmail(body), selectedRole=text(body,"role");
         require(name.length()<=100 && name.codePoints().noneMatch(Character::isISOControl),400,"氏名は100文字以内で入力してください。");
         require(List.of("sales","student","leader").contains(selectedRole),400,"役割は営業・エンジニア・リーダーから選択してください。");
         JsonNode passwordNode=body.get("password");
         require(passwordNode!=null && passwordNode.isTextual() && passwordNode.asText().length()>=10 && passwordNode.asText().length()<=128,400,"パスワードは10文字以上128文字以内で入力してください。");
         require(one(c,"SELECT id FROM app_users WHERE lower(email)=?",email)==null,409,"このメールアドレスは登録済みです。");
+        require(consumeCode(c,body,email,"invite").equals(selectedRole),400,"管理者が承認した役割を選択してください。");
         String userId=id("U-");
         execute(c,"INSERT INTO app_users(id,display_name,role,email,password_hash) VALUES(?,?,?,?,?)",userId,name,selectedRole,email,passwordHash(passwordNode.asText()));
-        return Map.of("message","アカウントを登録しました。","user",Map.of("id",userId,"name",name,"role",selectedRole));
+        return Map.of("message","アカウントを登録しました。","user",Map.of("id",userId,"name",name,"role",selectedRole,"sessionVersion",0));
     }
     private static Object loginUser(Connection c, JsonNode body) throws SQLException {
         JsonNode emailNode=body.get("email"),passwordNode=body.get("password");
         require(emailNode!=null && emailNode.isTextual() && emailNode.asText().length()<=254 && passwordNode!=null && passwordNode.isTextual() && passwordNode.asText().length()<=128,401,"メールアドレスまたはパスワードが正しくありません。");
         String email=emailNode.asText().trim().toLowerCase(Locale.ROOT),password=passwordNode.asText();
         reserveLoginAttempt(email);
-        Map<String,Object> row=one(c,"SELECT id,display_name,role,password_hash FROM app_users WHERE lower(email)=? AND (demo_login_profile IS DISTINCT FROM 'workbook' OR (? AND role<>'admin'))",email,LOCAL_DEMO);
+        Map<String,Object> row=one(c,"SELECT id,display_name,role,password_hash,session_version FROM app_users WHERE enabled AND lower(email)=? AND (demo_login_profile IS DISTINCT FROM 'workbook' OR (? AND role<>'admin'))",email,LOCAL_DEMO);
         boolean valid=passwordMatches(password,row==null?DUMMY_PASSWORD_HASH:str(row,"password_hash"));
         require(row!=null && valid,401,"メールアドレスまたはパスワードが正しくありません。");
         synchronized(LOGIN_ATTEMPTS) { LOGIN_ATTEMPTS.remove(email); }
@@ -567,18 +634,18 @@ public final class DealHunterServer {
         }
     }
     private static Object currentUser(Connection c, String userId) throws SQLException {
-        Map<String,Object> row=one(c,"SELECT id,display_name,role FROM app_users WHERE id=?",userId);
+        Map<String,Object> row=one(c,"SELECT id,display_name,role,session_version FROM app_users WHERE id=? AND enabled",userId);
         require(row!=null,404,"利用者が見つかりません。");
         return Map.of("user",publicUser(row));
     }
     private static Map<String,Object> adminUser(Map<String,Object> row) {
         Map<String,Object> value=new LinkedHashMap<>();
         value.put("id",str(row,"id")); value.put("name",str(row,"display_name")); value.put("email",row.get("email"));
-        value.put("role",str(row,"role")); value.put("leaderId",row.get("leader_id")); value.put("leaderName",row.get("leader_name"));
+        value.put("enabled",row.get("enabled")); value.put("role",str(row,"role")); value.put("leaderId",row.get("leader_id")); value.put("leaderName",row.get("leader_name"));
         value.put("isDemo",str(row,"email").endsWith("@dealhunter.example"));
         return value;
     }
-    private static final String ADMIN_USER_SELECT="SELECT u.id,u.display_name,u.email,u.role,m.leader_id,lu.display_name AS leader_name FROM app_users u LEFT JOIN leader_members m ON m.student_id=u.id AND m.active AND u.role='student' LEFT JOIN app_users lu ON lu.id=m.leader_id AND lu.role='leader'";
+    private static final String ADMIN_USER_SELECT="SELECT u.id,u.display_name,u.email,u.role,u.enabled,m.leader_id,lu.display_name AS leader_name FROM app_users u LEFT JOIN leader_members m ON m.student_id=u.id AND m.active AND u.role='student' LEFT JOIN app_users lu ON lu.id=m.leader_id AND lu.role='leader'";
     private static Object listUsers(Connection c, User user) throws SQLException {
         role(user,"admin");
         List<Map<String,Object>> users=new ArrayList<>(); List<Map<String,String>> leaders=new ArrayList<>();
@@ -587,7 +654,7 @@ public final class DealHunterServer {
                 Map<String,Object> row=new HashMap<>();
                 for(int index=1;index<=rows.getMetaData().getColumnCount();index++) row.put(rows.getMetaData().getColumnLabel(index),rows.getObject(index));
                 users.add(adminUser(row));
-                if(str(row,"role").equals("leader")) leaders.add(Map.of("id",str(row,"id"),"name",str(row,"display_name")));
+                if(Boolean.TRUE.equals(row.get("enabled")) && str(row,"role").equals("leader")) leaders.add(Map.of("id",str(row,"id"),"name",str(row,"display_name")));
             }
         }
         return Map.of("users",users,"leaders",leaders);
@@ -596,16 +663,28 @@ public final class DealHunterServer {
         role(user,"admin");
         // The handler obtains the exclusive account-edit advisory lock before
         // authenticating. Ordinary user requests hold the matching shared lock.
+        if(body.has("enabled")) {
+            require(body.size()==1 && body.get("enabled").isBoolean(),400,"利用状態を指定してください。");
+            boolean enabled=body.get("enabled").asBoolean();
+            Map<String,Object> previous=one(c,"SELECT role,email,enabled FROM app_users WHERE id=? FOR UPDATE",userId);
+            require(previous!=null,404,"アカウントが見つかりません。");
+            require(enabled || !user.id.equals(userId),409,"自分のアカウントは停止できません。");
+            if (!enabled && str(previous,"role").equals("admin"))
+                require(one(c,"SELECT id FROM app_users WHERE role='admin' AND enabled AND id<>? LIMIT 1",userId)!=null,409,"利用中の管理者を1名以上残してください。");
+            execute(c,"UPDATE app_users SET enabled=?,session_version=session_version+1 WHERE id=? AND enabled<>?",enabled,userId,enabled);
+            execute(c,"DELETE FROM account_access_codes WHERE email=lower(?)",str(previous,"email"));
+            return Map.of("message",enabled?"利用を再開しました。":"利用を停止しました。");
+        }
         require(body.has("role") && body.size()==(body.has("leaderId")?2:1),400,"役割と所属リーダーを指定してください。");
         String nextRole=text(body,"role");
         require(List.of("sales","student","leader","admin").contains(nextRole),400,"役割を正しく選択してください。");
-        Map<String,Object> target=one(c,"SELECT id,role,demo_login_profile FROM app_users WHERE id=? FOR UPDATE",userId);
+        Map<String,Object> target=one(c,"SELECT id,role,enabled,demo_login_profile FROM app_users WHERE id=? FOR UPDATE",userId);
         require(target!=null,404,"利用者が見つかりません。");
-        require(!nextRole.equals("admin") || !str(target,"demo_login_profile").equals("workbook"),409,
+        require(!nextRole.equals("admin") || str(target,"demo_login_profile").isEmpty(),409,
                 "管理者には個別のパスワードで登録したアカウントを指定してください。");
         String previousRole=str(target,"role");
-        if(previousRole.equals("admin") && !nextRole.equals("admin"))
-            require(((Number)one(c,"SELECT count(*) AS n FROM app_users WHERE role='admin'").get("n")).longValue()>1,409,"最後の管理者の役割は変更できません。別の管理者を先に登録してください。");
+        if(previousRole.equals("admin") && Boolean.TRUE.equals(target.get("enabled")) && !nextRole.equals("admin"))
+            require(((Number)one(c,"SELECT count(*) AS n FROM app_users WHERE role='admin' AND enabled").get("n")).longValue()>1,409,"最後の管理者の役割は変更できません。別の管理者を先に登録してください。");
         if(previousRole.equals("leader") && !nextRole.equals("leader")) {
             require(one(c,"SELECT student_id FROM leader_members WHERE leader_id=? AND active LIMIT 1",userId)==null,409,"先に部下の所属リーダーを変更してください。");
             require(one(c,"SELECT a.id FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE p.leader_id=? AND a.status='pending' AND a.cancelled_at IS NULL LIMIT 1",userId)==null,409,"面談者の選定待ち案件があります。選定を完了してから役割を変更してください。");
@@ -617,7 +696,7 @@ public final class DealHunterServer {
             leaderId=leader.isNull()?null:leader.asText().trim();
             if(leaderId!=null && leaderId.isEmpty()) leaderId=null;
             require(nextRole.equals("student") || leaderId==null,400,"所属リーダーを指定できるのはエンジニアだけです。");
-            if(leaderId!=null) require(!leaderId.equals(userId) && one(c,"SELECT id FROM app_users WHERE id=? AND role='leader'",leaderId)!=null,400,"登録済みのリーダーを選択してください。");
+            if(leaderId!=null) require(!leaderId.equals(userId) && one(c,"SELECT id FROM app_users WHERE id=? AND role='leader' AND enabled",leaderId)!=null,400,"登録済みのリーダーを選択してください。");
         } else if(previousRole.equals("student") && nextRole.equals("student")) {
             Map<String,Object> membership=one(c,"SELECT m.leader_id FROM leader_members m JOIN app_users l ON l.id=m.leader_id AND l.role='leader' WHERE m.student_id=? AND m.active",userId);
             if(membership!=null) leaderId=str(membership,"leader_id");
@@ -631,20 +710,35 @@ public final class DealHunterServer {
         role(user,"admin");
         Map<String,Object> row=one(c,dashboardSql,user.id);
         JsonNode dashboard=JSON.readTree(row.values().iterator().next().toString());
-        return Map.of("projects",dashboard.get("projects"),"events",dashboard.get("events"),"requests",dashboard.get("requests"),"importedCases",dashboard.get("importedCases"));
+        Map<String,Object> directories=one(c,"""
+                SELECT (SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'name',display_name,'role',role) ORDER BY display_name,id),'[]'::jsonb) FROM app_users WHERE enabled AND role IN ('sales','leader')) AS owners,
+                (SELECT coalesce(jsonb_agg(jsonb_build_object('projectId',h.project_id,'changedAt',h.changed_at,'changedBy',u.display_name,'oldSales',os.display_name,'newSales',ns.display_name,'oldLeader',ol.display_name,'newLeader',nl.display_name) ORDER BY h.changed_at DESC),'[]'::jsonb)
+                 FROM project_handoffs h JOIN app_users u ON u.id=h.changed_by LEFT JOIN app_users os ON os.id=h.old_sales_id LEFT JOIN app_users ns ON ns.id=h.new_sales_id LEFT JOIN app_users ol ON ol.id=h.old_leader_id LEFT JOIN app_users nl ON nl.id=h.new_leader_id) AS handoffs
+                """);
+        return Map.of("projects",dashboard.get("projects"),"events",dashboard.get("events"),"requests",dashboard.get("requests"),
+                "importedCases",dashboard.get("importedCases"),"companies",sharedCompanyCandidates(c),"owners",JSON.readTree(str(directories,"owners")),"handoffs",JSON.readTree(str(directories,"handoffs")));
     }
     private static Object updateProject(Connection c, User user, String projectId, JsonNode body) throws SQLException {
         role(user,"admin");
-        Map<String,String> fields=Map.ofEntries(Map.entry("name","name"),Map.entry("notes","notes"),Map.entry("participantName","participant_name"),Map.entry("participantNameKana","participant_name_kana"),Map.entry("upperCompany","upper_company"),Map.entry("primeCompany","prime_company"),Map.entry("endCompany","end_company"),Map.entry("category","category"),Map.entry("remarks","remarks"),Map.entry("executorName","executor_name"),Map.entry("followerNames","follower_names"));
-        require(!body.isEmpty(),400,"更新する案件情報を指定してください。");
-        for(Iterator<String> names=body.fieldNames();names.hasNext();) require(fields.containsKey(names.next()),400,"更新できない案件項目が指定されています。");
-        Map<String,Object> previous=one(c,"SELECT id,end_company FROM projects WHERE id=? FOR UPDATE",projectId);
+        Map<String,String> fields=Map.ofEntries(Map.entry("name","name"),Map.entry("notes","notes"),Map.entry("participantName","participant_name"),Map.entry("participantNameKana","participant_name_kana"),Map.entry("upperCompany","upper_company"),Map.entry("primeCompany","prime_company"),Map.entry("endCompany","end_company"),Map.entry("category","category"),Map.entry("remarks","remarks"),Map.entry("executorName","executor_name"),Map.entry("followerNames","follower_names"),Map.entry("salesId","sales_id"),Map.entry("leaderId","leader_id"));
+        require(body.size()>1,400,"更新する案件情報を指定してください。");
+        for(Iterator<String> names=body.fieldNames();names.hasNext();) { String field=names.next(); require(field.equals("revision") || fields.containsKey(field),400,"更新できない案件項目が指定されています。"); }
+        Map<String,Object> previous=one(c,"SELECT id,end_company,sales_id,leader_id,edit_revision FROM projects WHERE id=? FOR UPDATE",projectId);
         require(previous!=null,404,"案件が見つかりません。");
+        require(body.path("revision").isIntegralNumber(),400,"最新の案件を表示してから保存してください。");
+        require(body.path("revision").asLong()==((Number)previous.get("edit_revision")).longValue(),409,"別の管理者が更新しました。最新の内容を確認して入力し直してください。");
+        String nextSales=str(previous,"sales_id"), nextLeader=(String)previous.get("leader_id");
         List<String> assignments=new ArrayList<>(); List<Object> values=new ArrayList<>();
         for(var field:fields.entrySet()) {
             String key=field.getKey();
             if(!body.has(key)) continue;
-            if(key.equals("followerNames")) {
+            if(key.equals("salesId") || key.equals("leaderId")) {
+                String owner=text(body,key);
+                String requiredRole=key.equals("salesId")?"sales":"leader";
+                require(one(c,"SELECT id FROM app_users WHERE id=? AND enabled AND role=?",owner,requiredRole)!=null,400,"利用中の担当者を選択してください。");
+                if(key.equals("salesId")) nextSales=owner; else nextLeader=owner;
+                assignments.add(field.getValue()+"=?"); values.add(owner);
+            } else if(key.equals("followerNames")) {
                 JsonNode followers=body.get(key);
                 require(followers.isArray() && followers.size()<=20,400,"案件フォロー者は20名以内で入力してください。");
                 Set<String> names=new LinkedHashSet<>();
@@ -658,7 +752,7 @@ public final class DealHunterServer {
                 // Submitting an unchanged legacy value must not rewrite its spelling
                 // or surrounding whitespace while editing unrelated project fields.
                 boolean unchangedEndCompany=key.equals("endCompany") && body.get(key).isTextual() && body.get(key).asText().equals(str(previous,"end_company"));
-                String value=unchangedEndCompany?str(previous,"end_company"):List.of("upperCompany","primeCompany","endCompany").contains(key)?companyName(body,key,key,false):boundedText(body,key,maximum,key.equals("name"));
+                String value=unchangedEndCompany?str(previous,"end_company"):List.of("upperCompany","primeCompany","endCompany").contains(key)?companyName(body,key,key,key.equals("upperCompany")):boundedText(body,key,maximum,key.equals("name"));
                 if(key.equals("participantNameKana")) {
                     value=Normalizer.normalize(value,Normalizer.Form.NFC);
                     require(value.isEmpty() || value.matches("[ぁ-ゖゝゞー・ 　]+"),400,"参画者のふりがなはひらがなで入力してください。");
@@ -666,6 +760,11 @@ public final class DealHunterServer {
                 assignments.add(field.getValue()+"=?"); values.add(value);
             }
         }
+        if(!Objects.equals(nextSales,previous.get("sales_id")) || !Objects.equals(nextLeader,previous.get("leader_id"))) {
+            execute(c,"INSERT INTO project_handoffs(project_id,changed_by,old_sales_id,new_sales_id,old_leader_id,new_leader_id) VALUES(?,?,?,?,?,?)",
+                    projectId,user.id,previous.get("sales_id"),nextSales,previous.get("leader_id"),nextLeader);
+        }
+        assignments.add("edit_revision=edit_revision+1");
         values.add(projectId);
         execute(c,"UPDATE projects SET "+String.join(",",assignments)+" WHERE id=?",values.toArray());
         if(body.has("endCompany")) {
@@ -772,7 +871,7 @@ public final class DealHunterServer {
         content.fieldNames().forEachRemaining(k -> require(keys.contains(k),400,"未対応の下書き項目です。"));
         JsonNode values=content.path("values");
         require(values.isObject(),400,"下書きの入力項目が正しくありません。");
-        Set<String> fields=Set.of("project","upperCompany","primeCompany","endCompany","category","remarks","totalRounds","summary","participantName","participantNameKana","leaderId");
+        Set<String> fields=Set.of("project","upperCompany","primeCompany","endCompany","category","remarks","totalRounds","summary","participantName","participantNameKana","leaderId","responseDeadline");
         values.fields().forEachRemaining(f -> require(fields.contains(f.getKey()) && draftString(f.getValue()),400,"下書きの入力値が正しくありません。"));
         for(String array:List.of("slots","requestedDates","selectedStudents")) {
             JsonNode list=content.path(array);
@@ -861,6 +960,7 @@ public final class DealHunterServer {
         for(var member:students.entrySet()) {
             String requestId=id("R-");
             execute(c,"INSERT INTO interview_requests(id,project_id,student_id,status,schedule_mode,requested_dates,recruitment_id,total_rounds) VALUES(?,?,?,'requested',?,?::date[],?,(SELECT total_rounds FROM projects WHERE id=?))",requestId,projectId,member.getKey(),scheduleMode,datesArray(requestedDates),recruitmentId,projectId);
+            execute(c,"UPDATE interview_requests SET response_deadline=(SELECT response_deadline FROM projects WHERE id=?) WHERE id=?",projectId,requestId);
             for(Slot slot:slots) execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at) VALUES(?,?,?,?)",id("S-"),requestId,slot.start,slot.end);
             requestIds.add(requestId);
             previews.add(preview(c,projectId,member.getKey(),"lark","面談依頼の通知内容",List.of(line("宛先","面談連絡グループ"),line("メンション","@"+member.getValue()),line("案件",project),line("概要",summary),line(scheduleMode.equals("availability")?"日程の確認":"候補日時",times),line("面談ページ","http://127.0.0.1:3100/engineer?request="+requestId)),"面談依頼が来ました。概要を確認し、営業へ参加可能な日時を回答してください。外部送信は行っていません。"));
@@ -890,7 +990,7 @@ public final class DealHunterServer {
         Map<String,String> students=new LinkedHashMap<>();
         for(String memberId:memberIds) {
             require(!students.containsKey(memberId),400,"同じ面談者を重複して選択しないでください。");
-            Map<String,Object> member=one(c,"SELECT display_name FROM app_users WHERE id=? AND role='student'",memberId);
+            Map<String,Object> member=one(c,"SELECT display_name FROM app_users WHERE id=? AND role='student' AND enabled",memberId);
             require(member!=null,400,"受講者として登録された利用者を選んでください。");
             students.put(memberId,str(member,"display_name"));
         }
@@ -903,8 +1003,9 @@ public final class DealHunterServer {
         String leaderId=leaderAssignment || multiplePayload?text(body,"leaderId"):optionalText(body,"leaderId");
         Map<String,Object> leader=null;
         if(!leaderId.isEmpty()) {
-            leader=one(c,"SELECT display_name FROM app_users WHERE id=? AND role='leader'",leaderId);
+            leader=one(c,"SELECT display_name FROM app_users WHERE id=? AND role='leader' AND enabled",leaderId);
             require(leader!=null,400,"担当リーダーとして登録された利用者を選んでください。");
+            if(leaderAssignment) require(one(c,"SELECT 1 FROM leader_members m JOIN app_users u ON u.id=m.student_id WHERE m.leader_id=? AND m.active AND u.enabled AND u.role='student' LIMIT 1",leaderId)!=null,409,"選定できるメンバーがいません。別のリーダーを選ぶか、管理者に所属設定を依頼してください。");
         }
         String scheduleMode = body.has("scheduleMode") ? text(body,"scheduleMode") : "candidates";
         require(scheduleMode.equals("candidates") || scheduleMode.equals("availability"),400,"日程の確認方法が正しくありません。");
@@ -917,6 +1018,7 @@ public final class DealHunterServer {
         List<Slot> slots = availability ? List.of() : slots(candidates,false);
         String projectId=id("DH-");
         execute(c,"INSERT INTO projects(id,name,sales_id,notes,leader_id,participant_name,participant_name_kana,upper_company,end_company,prime_company,category,remarks,total_rounds) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",projectId,project,user.id,summary,leaderId.isEmpty()?null:leaderId,participantName,participantNameKana,upperCompany,endCompany,primeCompany,category,remarks,plannedRounds);
+        execute(c,"UPDATE projects SET response_deadline=? WHERE id=?",responseDeadline(body),projectId);
         rememberEndCompany(c,projectId,endCompany);
         if(attachment!=null) execute(c,"INSERT INTO project_attachments(project_id,filename,content) VALUES(?,?,?)",projectId,attachment.name(),attachment.content());
         if(leaderAssignment) {
@@ -947,31 +1049,100 @@ public final class DealHunterServer {
         require(recruitment!=null,404,"面談者の選定依頼が見つかりません。");
         return recruitment;
     }
+    private static Set<String> comparisonParts(String name) {
+        Set<String> parts=new HashSet<>();
+        for(String part:Normalizer.normalize(name, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT).split("→")) {
+            String compact=part.replaceAll("[\\p{javaWhitespace}\\p{Z}\\uFEFF]","")
+                    .replaceAll("^(株式会社|有限会社|合同会社|\\([株有同]\\))|(株式会社|有限会社|合同会社|\\([株有同]\\))$","");
+            if(!compact.isEmpty()) parts.add(compact);
+        }
+        return parts;
+    }
+    private static Map<String,List<String>> recruitmentWarnings(Connection c,User user,String recruitmentId) throws SQLException {
+        role(user,"leader");
+        var project=one(c,"SELECT p.leader_id,p.upper_company,p.prime_company,p.end_company FROM recruitments a JOIN projects p ON p.id=a.project_id WHERE a.id=? AND a.cancelled_at IS NULL AND a.status='pending'",recruitmentId);
+        require(project!=null && user.id.equals(str(project,"leader_id")),404,"選定できる依頼が見つかりません。");
+        Map<String,List<String>> warnings=new LinkedHashMap<>();
+        try(var members=prepared(c,"SELECT u.id FROM leader_members m JOIN app_users u ON u.id=m.student_id WHERE m.leader_id=? AND m.active AND u.enabled AND u.role='student' ORDER BY u.id",user.id);
+            var rows=members.executeQuery()) {
+            while(rows.next()) {
+                String student=rows.getString("id");
+                Set<String> history=new HashSet<>(),allMarks=new HashSet<>();
+                for(var company:interviewedCompanies(c,student)) history.addAll(comparisonParts(company.name));
+                Map<String,Set<String>> marks=Map.of("upper",new HashSet<>(),"end",new HashSet<>());
+                try(var statement=prepared(c,"SELECT DISTINCT company_role,company_name FROM interviewer_company_restrictions WHERE student_id=?",student); var saved=statement.executeQuery()) {
+                    while(saved.next()) {
+                        String role=saved.getString(1),name=saved.getString(2);
+                        if(role.equals("all")) allMarks.addAll(comparisonParts(name));
+                        else marks.get(role).add(companyComparisonKey(name));
+                    }
+                }
+                List<String> messages=new ArrayList<>();
+                for(String kind:List.of("upper","prime","end")) {
+                    String name=str(project,kind+"_company");
+                    Set<String> keys=comparisonParts(name);
+                    boolean interviewed=!Collections.disjoint(keys,history);
+                    boolean marked=!Collections.disjoint(keys,allMarks) || marks.getOrDefault(kind,Set.of()).contains(companyComparisonKey(name));
+                    if(interviewed || marked) messages.add(Map.of("upper","上位会社","prime","元請け","end","エンド企業").get(kind)+"："+name+"（"+(interviewed?"面談履歴あり":"NG登録あり")+"）");
+                }
+                warnings.put(student,messages);
+            }
+        }
+        return warnings;
+    }
     private static Object assignRecruitment(Connection c, User user, String recruitmentId, JsonNode body) throws Exception {
         role(user,"leader");
         Map<String,Object> recruitment=recruitment(c,recruitmentId);
         require(user.id.equals(str(recruitment,"leader_id")),403,"この案件の面談者は選定できません。");
         require(str(recruitment,"status").equals("pending"),409,"この依頼の面談者はすでに選定されています。");
-        require(body.size()==1 && body.has("studentIds"),400,"選定する面談者だけを指定してください。");
+        require(body.has("studentIds") && body.size()==(body.has("confirmedWarnings")?2:1),400,"選定する面談者を指定してください。");
         List<String> selected=studentIds(body.get("studentIds"));
         Map<String,String> students=new LinkedHashMap<>();
         // Use a stable order when protecting team membership and registered roles.
         for(String memberId:selected.stream().sorted().toList()) {
-            Map<String,Object> member=one(c,"SELECT u.display_name FROM leader_members m JOIN app_users u ON u.id=m.student_id WHERE m.leader_id=? AND m.student_id=? AND m.active AND u.role='student' FOR SHARE OF m,u",user.id,memberId);
+            Map<String,Object> member=one(c,"SELECT u.display_name FROM leader_members m JOIN app_users u ON u.id=m.student_id WHERE m.leader_id=? AND m.student_id=? AND m.active AND u.role='student' AND u.enabled FOR SHARE OF m,u",user.id,memberId);
             require(member!=null,400,"自分の部下として登録されている面談者を選択してください。");
             students.put(memberId,str(member,"display_name"));
+        }
+        var warnings=recruitmentWarnings(c,user,recruitmentId);
+        Map<String,List<String>> selectedWarnings=new TreeMap<>();
+        for(String id:selected) if(!warnings.getOrDefault(id,List.of()).isEmpty()) selectedWarnings.put(id,warnings.get(id));
+        if(!selectedWarnings.isEmpty() || body.has("confirmedWarnings"))
+            require(JSON.valueToTree(selectedWarnings).equals(body.path("confirmedWarnings")),409,"会社別のNG情報を再確認し、面談者を選び直してください。");
+        LocalDateTime assignedAt=nowInJapan();
+        List<String> adjustments=new ArrayList<>();
+        try(PreparedStatement expired=prepared(c,"DELETE FROM recruitment_candidate_slots WHERE recruitment_id=? AND start_at<=?",recruitmentId,assignedAt)) {
+            int count=expired.executeUpdate();
+            if(count>0) adjustments.add("開始時刻を過ぎた候補日時"+count+"件を除きました。");
         }
         List<Slot> templates=new ArrayList<>();
         try(PreparedStatement statement=prepared(c,"SELECT start_at,end_at FROM recruitment_candidate_slots WHERE recruitment_id=? ORDER BY start_at,id",recruitmentId);
                 ResultSet rows=statement.executeQuery()) {
             while(rows.next()) templates.add(new Slot(rows.getTimestamp("start_at").toLocalDateTime(),rows.getTimestamp("end_at")==null?null:rows.getTimestamp("end_at").toLocalDateTime()));
         }
-        List<LocalDate> requestedDates=storedRequestedDates(recruitment).stream().sorted().toList();
+        Set<LocalDate> originalDates=storedRequestedDates(recruitment);
+        List<LocalDate> requestedDates=originalDates.stream().filter(day->!day.isBefore(assignedAt.toLocalDate())).sorted().toList();
+        int expiredDates=originalDates.size()-requestedDates.size();
+        if(expiredDates>0) adjustments.add("過ぎた指定日"+expiredDates+"件を除きました。");
+        String scheduleMode=str(recruitment,"schedule_mode");
+        if((scheduleMode.equals("candidates") && templates.isEmpty()) || (expiredDates>0 && requestedDates.isEmpty())) {
+            scheduleMode="availability";
+            adjustments.add("面談者が希望日時を営業に回答する依頼に切り替えました。");
+        }
         String projectId=str(recruitment,"project_id");
-        IssuedRequests issued=issueRequests(c,projectId,str(recruitment,"project_name"),str(recruitment,"notes"),str(recruitment,"schedule_mode"),requestedDates,templates,students,recruitmentId);
-        execute(c,"UPDATE recruitments SET status='assigned',assigned_at=now() WHERE id=?",recruitmentId);
-        var salesPreview=preview(c,projectId,str(recruitment,"sales_id"),"lark","面談者の選定が完了",List.of(line("メンション","@"+str(recruitment,"sales_name")),line("案件",str(recruitment,"project_name")),line("担当リーダー",user.name),line("面談者",String.join("、",students.values())),line("面談ページ","http://127.0.0.1:3100/sales?request="+issued.ids().getFirst())),"担当リーダーが面談者を選定しました。各面談者の参加可能な日時への回答を待ってください。外部送信は行っていません。");
-        return Map.of("message",students.size()+"名を面談者に選定し、各人への依頼を保存しました。","projectId",projectId,"recruitmentId",recruitmentId,"requestId",issued.ids().getFirst(),"requestIds",issued.ids(),"preview",issued.previews().getFirst(),"previews",issued.previews(),"salesPreview",salesPreview);
+        if(one(c,"UPDATE projects SET response_deadline=NULL WHERE id=? AND response_deadline<=? RETURNING id",projectId,assignedAt)!=null)
+            adjustments.add("過ぎた回答期限を解除しました。");
+        IssuedRequests issued=issueRequests(c,projectId,str(recruitment,"project_name"),str(recruitment,"notes"),scheduleMode,requestedDates,templates,students,recruitmentId);
+        String changes=String.join("",adjustments);
+        String review=null;
+        if(!selectedWarnings.isEmpty()) {
+            List<Map<String,Object>> accepted=new ArrayList<>();
+            for(var item:selectedWarnings.entrySet()) accepted.add(Map.of("id",item.getKey(),"name",students.get(item.getKey()),"reasons",item.getValue()));
+            review=JSON.writeValueAsString(Map.of("reviewerId",user.id,"reviewerName",user.name,"people",accepted));
+        }
+        execute(c,"UPDATE recruitments SET status='assigned',assigned_at=now(),ng_review=?::jsonb,schedule_mode=?,requested_dates=?::date[] WHERE id=?",review,scheduleMode,datesArray(requestedDates),recruitmentId);
+        var salesPreview=preview(c,projectId,str(recruitment,"sales_id"),"lark","面談者の選定が完了",List.of(line("メンション","@"+str(recruitment,"sales_name")),line("案件",str(recruitment,"project_name")),line("担当リーダー",user.name),line("面談者",String.join("、",students.values())),line("面談ページ","http://127.0.0.1:3100/sales?request="+issued.ids().getFirst())),"担当リーダーが面談者を選定しました。"+changes+"各面談者の参加可能な日時への回答を待ってください。外部送信は行っていません。");
+        return Map.of("message",students.size()+"名を面談者に選定し、各人への依頼を保存しました。"+changes,"projectId",projectId,"recruitmentId",recruitmentId,"requestId",issued.ids().getFirst(),"requestIds",issued.ids(),"preview",issued.previews().getFirst(),"previews",issued.previews(),"salesPreview",salesPreview);
     }
     private static Object cancelInterviewRequest(Connection c, User user, String requestId, JsonNode body) throws SQLException {
         var request=request(c,user,requestId,"sales");
@@ -1060,7 +1231,9 @@ public final class DealHunterServer {
             Set<String> ids = new LinkedHashSet<>();
             for (JsonNode n : selected) {
                 require(n.isTextual() && ids.add(n.asText()),400,"候補日時の選択が正しくありません。");
-                require(one(c,"SELECT id FROM candidate_slots WHERE id=? AND request_id=? AND interview_round=?",n.asText(),requestId,r.get("interview_round")) != null,400,"今回の面談依頼の候補から選んでください。");
+                Map<String,Object> choice=one(c,"SELECT start_at FROM candidate_slots WHERE id=? AND request_id=? AND interview_round=?",n.asText(),requestId,r.get("interview_round"));
+                require(choice!=null,400,"今回の面談依頼の候補から選んでください。");
+                requireFuture(timestamp(choice,"start_at"));
             }
             for (String slotId : ids) execute(c,"UPDATE candidate_slots SET available=true WHERE id=? AND request_id=? AND interview_round=?",slotId,requestId,r.get("interview_round"));
             answer = ids.size()+"件";
@@ -1083,6 +1256,7 @@ public final class DealHunterServer {
             execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at,interview_round) VALUES(?,?,?,?,?)",id("S-"),requestId,slot.start,slot.end,round);
         }
         execute(c,"UPDATE interview_requests SET status='requested',response_kind='none',response_note='',schedule_mode=?,requested_dates='{}',task_revision=task_revision+1 WHERE id=?",fixed?"candidates":"availability",requestId);
+        execute(c,"UPDATE interview_requests SET response_deadline=?,last_reminded_at=NULL WHERE id=?",responseDeadline(body),requestId);
         var p=preview(c,str(r,"project_id"),str(r,"student_id"),"lark","面談日程の再調整",List.of(line("案件",str(r,"project_name")),line("日程",scheduleLabel(fixed?"candidates":"availability",List.of(),replacements))),"新しい日程を回答してください。外部送信は行っていません。");
         return Map.of("message","面談者へ新しい日程の回答を依頼しました。","requestId",requestId,"preview",p);
     }
@@ -1149,16 +1323,42 @@ public final class DealHunterServer {
         LocalDateTime previous=previousInterviewTime(c,requestId,((Number)r.get("interview_round")).intValue());
         require(previous==null || start.isAfter(previous),400,"次回面談は前回面談より後の日時を選択してください。");
         String eventId=id("E-");
+        NoticeInfo info=NoticeInfo.fromRow(Map.of()).merge(body,start,false);
+        checkMeetingTime(c,r,null,start,end,info.prepStart);
         int round=((Number)r.get("interview_round")).intValue();
         String roundLabel=round==1?"一次面談":round==2?"二次面談":round+"次面談";
         execute(c,"INSERT INTO scheduled_events(id,project_id,student_id,event_date,start_time,end_time,kind,route,format,request_id,meeting_url,interview_round) VALUES(?,?,?,?,?,?,'meet',?,'オンライン',?,?,?)",eventId,r.get("project_id"),r.get("student_id"),start.toLocalDate(),start.toLocalTime(),end==null?null:end.toLocalTime(),roundLabel,requestId,url,round);
         execute(c,"UPDATE interview_requests SET status='confirmed',confirmed_slot_id=? WHERE id=?",slotId,requestId);
-        NoticeInfo info=NoticeInfo.fromRow(Map.of()).merge(body,start,false);
         require(previous==null || info.prepStart==null || info.prepStart.isAfter(previous),400,"事前打合せは前回面談より後の日時を選択してください。");
         info.save(c,eventId);
         storeChange(c,eventId,1,"scheduled",start,end,info.prepStart,"面談日時を確定");
         var p=preview(c,str(r,"project_id"),str(r,"student_id"),"calendar","面談予定の登録内容",List.of(line("案件",str(r,"project_name")),line("参加者",str(r,"person")),line("面談日時",slotLabel(new Slot(start,end))),line("面談URL",url.isEmpty()?"URL待ち":url),line("面談ページ","http://127.0.0.1:3100/engineer?event="+eventId)),"面談日時を確定しました。Larkカレンダーへの実際の登録は行っていません。");
         return Map.of("message",url.isEmpty()?"日時を確定しました。面談URLは後から登録できます。":"面談日時とURLを保存しました。","eventId",eventId,"preview",p);
+    }
+    private static void checkMeetingTime(Connection c,Map<String,Object> row,String editing,LocalDateTime start,LocalDateTime end,LocalDateTime prep) throws SQLException {
+        requireFuture(start);
+        if(prep!=null) requireFuture(prep);
+        String student=str(row,"student_id");
+        // Each confirmation/reschedule holds this lock until its full transaction commits.
+        // Try-lock avoids interlocking two groups with overlapping attendee lists.
+        require(Boolean.TRUE.equals(one(c,"SELECT pg_try_advisory_xact_lock(709035,hashtext(?)) AS locked",student).get("locked")),
+            409,"同じ面談者の日程を更新中です。最新の回答を確認して再度お試しください。");
+        String sql="""
+            WITH reserved AS (
+              SELECT e.id,p.name, tsrange(e.event_date+e.start_time,
+                   coalesce(e.event_date+e.end_time,e.event_date+e.start_time+interval '1 minute'),'[)') AS period,
+                   e.prep_start
+              FROM scheduled_events e JOIN projects p ON p.id=e.project_id
+              WHERE e.student_id=? AND e.kind='meet' AND e.schedule_state='scheduled' AND e.id IS DISTINCT FROM ?::text
+            ), times AS (
+              SELECT name,period FROM reserved UNION ALL
+              SELECT name,tsrange(prep_start,prep_start+interval '1 minute','[)') FROM reserved WHERE prep_start IS NOT NULL
+            )
+            SELECT name,lower(period) AS start FROM times WHERE period && tsrange(?::timestamp,?::timestamp,'[)')
+              OR period @> ?::timestamp ORDER BY lower(period) LIMIT 1
+            """;
+        Map<String,Object> conflict=one(c,sql,student,editing,start,end==null?start.plusMinutes(1):end,prep);
+        if(conflict!=null) throw new ApiError(409,str(row,"person")+"さんの別の面談予定と重なります（"+str(conflict,"name")+"・"+timestamp(conflict,"start").toString().replace('T',' ')+"）。別の日時を選んでください。");
     }
     private static Object groupConfirm(Connection c,User user,JsonNode body) throws Exception {
         role(user,"sales");
@@ -1208,10 +1408,9 @@ public final class DealHunterServer {
     }
     private static Object readNotice(Connection c,User user,String eventId,JsonNode body) throws SQLException {
         Map<String,Object> e=ownedEvent(c,user,eventId,"student");
-        require("meet".equals(e.get("kind")),400,"面談の案内を選んでください。");
         long rev=noticeVersion(e,body);
         var saved=one(c,"UPDATE scheduled_events SET notice_read_at=COALESCE(notice_read_at,now()) WHERE id=? RETURNING to_jsonb(notice_read_at)#>>'{}' AS read_at",eventId);
-        return Map.of("message","最新の面談案内を確認しました。","eventId",eventId,"revision",rev,"noticeReadAt",str(saved,"read_at"));
+        return Map.of("message","最新の案内を確認しました。","eventId",eventId,"revision",rev,"noticeReadAt",str(saved,"read_at"));
     }
     private static Object editNotice(Connection c,User user,String eventId,JsonNode body) throws Exception {
         Map<String,Object> e=ownedEvent(c,user,eventId,"sales");
@@ -1242,6 +1441,9 @@ public final class DealHunterServer {
         NoticeInfo info=oldInfo.merge(body,start,resuming);
         boolean logistics=stateChanged || moved || !Objects.equals(end,oldEnd) || !url.equals(oldUrl) || !oldInfo.logisticsMatch(info);
         boolean instructionsChanged=!oldInfo.instructions.equals(info.instructions);
+        if(!suspended && (moved || resuming || !Objects.equals(oldInfo.prepStart,info.prepStart))) {
+            checkMeetingTime(c,e,eventId,start,end,info.prepStart);
+        }
         boolean feedbackChanged=!oldInfo.clientFeedback.equals(info.clientFeedback) || info.shareFeedback!=oldInfo.shareFeedback;
         if(logistics) {
             require("scheduled".equals(e.get("status")) && "pending".equals(e.get("result")),409,"所感提出後・結果登録後の面談日程は変更できません。");
@@ -1274,21 +1476,72 @@ public final class DealHunterServer {
                 line("面談ページ","http://127.0.0.1:3100/engineer?event="+eventId)),"案内が変わりました。最新の内容を確認してください。外部送信は行っていません。");
         return Map.of("message","面談案内を更新しました。","eventId",eventId,"revision",revision+1,"preview",p);
     }
+    private static Object saveFeedbackDraft(Connection c, User user, String eventId, JsonNode body) throws Exception {
+        event(c,user,eventId,"student");
+        Map<String,Object> previous=one(c,"SELECT revision FROM interview_feedback WHERE event_id=?",eventId);
+        int base=previous==null?0:((Number)previous.get("revision")).intValue();
+        require(body.path("baseRevision").isIntegralNumber() && body.path("baseRevision").asLong()==base,409,"所感は別の画面で提出・訂正済みです。");
+        require(body.path("version").isIntegralNumber() && body.path("version").canConvertToInt(),400,"下書きの版を確認してください。");
+        JsonNode content=body.path("content");
+        require(content.isObject() && content.size()==6,400,"下書きの項目を確認してください。");
+        for(String key:List.of("duties","process","remote","impression","reason")) require(content.path(key).isTextual(),400,"下書きは文字で入力してください。");
+        require(content.path("questions").isArray(),400,"質問は1問ずつ入力してください。");
+        for(JsonNode question:content.path("questions")) require(question.isTextual(),400,"質問は文字で入力してください。");
+        Map<String,Object> current=one(c,"SELECT version FROM interview_feedback_drafts WHERE event_id=?",eventId);
+        int version=current==null?0:((Number)current.get("version")).intValue();
+        require(version==body.path("version").asInt(),409,"他の画面で下書きが更新されています。入力を控え、再読み込みしてください。");
+        var saved=one(c,"""
+            INSERT INTO interview_feedback_drafts(event_id,base_revision,version,content) VALUES(?,?,?,?::jsonb)
+            ON CONFLICT(event_id) DO UPDATE SET version=excluded.version,content=excluded.content,saved_at=now()
+            RETURNING version,saved_at::text AS at
+            """,eventId,base,version+1,JSON.writeValueAsString(content));
+        return Map.of("version",saved.get("version"),"savedAt",saved.get("at"));
+    }
     private static Object submitFeedback(Connection c, User user, String eventId, JsonNode body) throws Exception {
         Map<String,Object> e=event(c,user,eventId,"student");
-        require(one(c,"SELECT id FROM interview_feedback WHERE event_id=?",eventId)==null,409,"この面談の所感は提出済みです。");
+        if(body.has("draftVersion")) {
+            Map<String,Object> draft=one(c,"SELECT version FROM interview_feedback_drafts WHERE event_id=?",eventId);
+            long latest=draft==null?0:((Number)draft.get("version")).longValue();
+            require(body.path("draftVersion").isIntegralNumber() && latest==body.path("draftVersion").asLong(),409,"別の画面から下書きが更新されています。最新の下書きを確認してください。");
+        }
+        Map<String,Object> existing=one(c,"SELECT id,revision FROM interview_feedback WHERE event_id=?",eventId);
+        boolean correcting=body.has("revision");
+        if(correcting) {
+            require(existing!=null && body.path("revision").isIntegralNumber() && body.path("revision").asLong()==((Number)existing.get("revision")).longValue(),409,"提出内容が更新されています。最新の所感を確認してください。");
+        } else {
+            require(existing==null,409,"この面談の所感は提出済みです。");
+            if(!EARLY_FEEDBACK) {
+                require(!eventMoment(e,true).isAfter(LocalDateTime.now(ZoneId.of("Asia/Tokyo"))),409,"面談が終了してから所感を提出してください。");
+                require(e.get("end_time")!=null || body.path("meetingFinished").asBoolean(false),400,"終了時刻未登録のため、面談が終了したことを確認してください。");
+            }
+        }
         String duties=text(body,"duties"),process=text(body,"process"),remote=text(body,"remote"),impression=text(body,"impression");
         JsonNode questions=body.get("questions");
         require(questions!=null && questions.isArray(),400,"質問は1問ずつ追加してください。");
         List<String> titles=new ArrayList<>();
         for(JsonNode q:questions) { require(q.isTextual() && !q.asText().trim().isEmpty(),400,"空の質問を入力しないでください。"); titles.add(q.asText().trim()); }
-        String feedbackId=id("F-");
-        execute(c,"INSERT INTO interview_feedback(id,event_id,student_id,duties,process,remote,impression) VALUES(?,?,?,?,?,?,?)",feedbackId,eventId,user.id,duties,process,remote,impression);
+        String feedbackId=correcting?str(existing,"id"):id("F-");
+        if(correcting) {
+            String reason=boundedText(body,"reason",500,true);
+            execute(c,"""
+                INSERT INTO interview_feedback_edits(feedback_id,revision,reason,previous)
+                SELECT f.id,f.revision,?,jsonb_build_object('duties',f.duties,'process',f.process,'remote',f.remote,'impression',f.impression,
+                    'questions',COALESCE((SELECT jsonb_agg(q.title ORDER BY q.display_order,q.id) FROM interview_questions q WHERE q.feedback_id=f.id),'[]'::jsonb))
+                FROM interview_feedback f WHERE f.id=?
+                """,reason,feedbackId);
+            execute(c,"UPDATE interview_feedback SET duties=?,process=?,remote=?,impression=?,revision=revision+1 WHERE id=?",duties,process,remote,impression,feedbackId);
+            execute(c,"DELETE FROM interview_questions WHERE feedback_id=?",feedbackId);
+        } else execute(c,"INSERT INTO interview_feedback(id,event_id,student_id,duties,process,remote,impression) VALUES(?,?,?,?,?,?,?)",feedbackId,eventId,user.id,duties,process,remote,impression);
         int order=((Number)one(c,"SELECT COALESCE(max(display_order),0) AS n FROM interview_questions WHERE project_id=?",e.get("project_id")).get("n")).intValue();
         for(String title:titles) execute(c,"INSERT INTO interview_questions(id,project_id,title,tag,context,display_order,event_id,feedback_id) VALUES(?,?,?,'面談記録',?,?,?,?)",id("Q-"),e.get("project_id"),title,impression,++order,eventId,feedbackId);
+        execute(c,"DELETE FROM interview_feedback_drafts WHERE event_id=?",eventId);
         if(!str(e,"status").equals("entry-registered")) execute(c,"UPDATE scheduled_events SET status='feedback-submitted' WHERE id=?",eventId);
-        var p=preview(c,str(e,"project_id"),str(e,"sales_id"),"lark","面談所感の提出",List.of(line("受講者",user.name),line("案件",str(e,"project_name")),line("聞かれた質問",titles.size()+"件"),line("面談ページ","http://127.0.0.1:3100/sales?event="+eventId)),"面談所感と質問を保存しました。外部送信は行っていません。");
-        return Map.of("message","面談所感と質問を保存しました。","preview",p);
+        var p=preview(c,str(e,"project_id"),str(e,"sales_id"),"lark",correcting?"面談所感の訂正":"面談所感の提出",List.of(line("受講者",user.name),line("案件",str(e,"project_name")),line("聞かれた質問",titles.size()+"件"),line("面談ページ","http://127.0.0.1:3100/sales?event="+eventId)),correcting?"最新の所感と訂正履歴を確認してください。":"面談所感と質問を保存しました。外部送信は行っていません。");
+        return Map.of("message",correcting?"所感を訂正し、担当営業へ共有しました。":"所感を提出しました。営業の結果確認待ちです。","preview",p);
+    }
+    private static LocalDateTime eventMoment(Map<String,Object> event, boolean end) {
+        Time time=(Time)(end && event.get("end_time")!=null ? event.get("end_time") : event.get("start_time"));
+        return ((java.sql.Date)event.get("event_date")).toLocalDate().atTime(time.toLocalTime());
     }
     private record VisibleEntry(String when, String project) {}
     private record EntryWarning(List<VisibleEntry> visibleEntries, boolean hasHiddenEntries, String token) {}
@@ -1321,15 +1574,20 @@ public final class DealHunterServer {
             FROM scheduled_events e JOIN projects p ON p.id=e.project_id
             WHERE e.kind='entry' AND e.schedule_state='scheduled'
               AND e.student_id=? AND e.event_date=? AND e.project_id<>?
-            ORDER BY e.start_time, e.id
+            UNION ALL
+            SELECT h.project_id, NULL::time, p.name FROM project_import_history h JOIN projects p ON p.id=h.project_id
+            WHERE h.status='joined' AND h.student_id=? AND h.entry_date=? AND h.project_id<>?
+              AND NOT EXISTS(SELECT 1 FROM scheduled_events x WHERE x.project_id=h.project_id AND x.student_id=h.student_id AND x.kind='entry' AND x.schedule_state='scheduled' AND x.event_date=h.entry_date)
+            ORDER BY 2 NULLS LAST, 1
             """;
         List<VisibleEntry> visible = new ArrayList<>();
         List<List<Object>> snapshot = new ArrayList<>();
-        try (PreparedStatement s = prepared(c, sql, meeting.get("student_id"), when.toLocalDate(), meeting.get("project_id"));
+        try (PreparedStatement s = prepared(c, sql, meeting.get("student_id"), when.toLocalDate(), meeting.get("project_id"),meeting.get("student_id"),when.toLocalDate(),meeting.get("project_id"));
              ResultSet rows = s.executeQuery()) {
             while (rows.next()) {
                 String project = rows.getString("project");
-                String start = when.toLocalDate().atTime(rows.getObject("start_time",java.time.LocalTime.class)).toString();
+                var time=rows.getObject("start_time",java.time.LocalTime.class);
+                String start = time==null ? when.toLocalDate().toString()+"（時刻未登録）" : when.toLocalDate().atTime(time).toString();
                 visible.add(new VisibleEntry(start, project));
                 snapshot.add(List.of(rows.getString("id"), start, project));
             }
@@ -1343,6 +1601,90 @@ public final class DealHunterServer {
         return new EntryWarning(visible, false, token);
     }
 
+    private static void rememberEntryPlan(Connection c,String id,long revision,String state,LocalDateTime start,String reason,String place,String guidance) throws SQLException {
+        execute(c,"INSERT INTO event_notice_history(event_id,revision,state,start_at,reason,meeting_place,guidance) VALUES(?,?,?,?,?,?,?) ON CONFLICT(event_id,revision) DO NOTHING",
+                id,revision,state,start,reason,place,guidance);
+    }
+    private static Object changeEntry(Connection c, User user, String id, JsonNode body) throws Exception {
+        Map<String,Object> e=ownedEvent(c,user,id,"sales");
+        require("entry".equals(e.get("kind")),400,"初回入場を選んでください。");
+        long revision=noticeVersion(e,body);
+        String state=text(body,"scheduleState"), previous=str(e,"schedule_state");
+        if(booleanField(body,"undoCompletion",false)) {
+            require(e.get("engineer_confirmed_at")!=null && previous.equals("scheduled"),409,"入場完了済みの予定を選んでください。");
+            // Serialize an arrival correction with recording the end of this placement.
+            one(c,"SELECT id FROM projects WHERE id=? FOR UPDATE",e.get("project_id"));
+            require(one(c,"SELECT 1 FROM placement_exits WHERE project_id=? AND student_id=?",e.get("project_id"),e.get("student_id"))==null,409,"参画終了を取り消してから入場完了を訂正してください。");
+            String reason="入場完了の訂正："+boundedText(body,"reason",1000,true);
+            LocalDateTime start=((java.sql.Date)e.get("event_date")).toLocalDate().atTime(((Time)e.get("start_time")).toLocalTime());
+            rememberEntryPlan(c,id,revision,previous,start,str(e,"change_reason"),str(e,"meeting_place"),str(e,"guidance"));
+            execute(c,"UPDATE scheduled_events SET engineer_confirmed_at=NULL, notice_read_at=NULL, notice_revision=notice_revision+1, change_reason=? WHERE id=?",reason,id);
+            rememberEntryPlan(c,id,revision+1,previous,start,reason,str(e,"meeting_place"),str(e,"guidance"));
+            return Map.of("message","訂正理由を記録し、本人の入場予定に戻しました。");
+        }
+        require(e.get("engineer_confirmed_at")==null,409,"入場完了前の予定を選んでください。");
+        require(!"cancelled".equals(previous),409,"取り消した入場予定は変更できません。");
+        require(Set.of("scheduled","postponed","cancelled").contains(state),400,"入場予定の状態を選んでください。");
+        String reason=boundedText(body,"reason",2000,true);
+        LocalDateTime original=((java.sql.Date)e.get("event_date")).toLocalDate().atTime(((Time)e.get("start_time")).toLocalTime());
+        LocalDateTime when=original;
+        String place=str(e,"meeting_place"), guidance=str(e,"guidance");
+        if(state.equals("scheduled")) {
+            when=date(text(body,"when")); place=boundedText(body,"where",2000,true); guidance=boundedText(body,"memo",2000,false);
+            if(e.get("parent_event_id")!=null) {
+                Map<String,Object> parent=one(c,"SELECT event_date,start_time FROM scheduled_events WHERE id=?",e.get("parent_event_id"));
+                entryTime(parent,body);
+            }
+            if(!when.equals(original) || !previous.equals(state)) {
+                execute(c,"SELECT pg_advisory_xact_lock(709033,hashtext(?))",str(e,"student_id")+":"+when.toLocalDate());
+                EntryWarning warning=entryWarning(c,user,e,when);
+                if(warning!=null && !warning.token().equals(body.path("entryWarningToken").asText())) throw new EntryDayConflict(warning);
+            }
+        }
+        require(!previous.equals(state) || !when.equals(original) || !place.equals(str(e,"meeting_place")) || !guidance.equals(str(e,"guidance")),400,"変更する内容を入力してください。");
+        rememberEntryPlan(c,id,revision,previous,original,str(e,"change_reason"),str(e,"meeting_place"),str(e,"guidance"));
+        execute(c,"UPDATE scheduled_events SET event_date=?,start_time=?,meeting_place=?,format=?,guidance=?,schedule_state=?,change_reason=?,notice_revision=notice_revision+1,notice_read_at=NULL WHERE id=?",
+                when.toLocalDate(),when.toLocalTime(),place,place,guidance,state,reason,id);
+        rememberEntryPlan(c,id,revision+1,state,when,reason,place,guidance);
+        String label=state.equals("scheduled")?"初回入場案内を更新":state.equals("postponed")?"初回入場を延期":"初回入場を取消";
+        var notice=preview(c,str(e,"project_id"),str(e,"student_id"),"lark",label,List.of(line("案件",str(e,"project_name")),line("対象日時",when.toString().replace('T',' ')),line("理由",reason)),"本人の画面に変更内容を反映しました。");
+        return Map.of("message",label+"しました。","preview",notice);
+    }
+    private static Object changePlacementExit(Connection c, User user, String projectId, JsonNode body) throws Exception {
+        role(user,"sales");
+        Map<String,Object> project=one(c,"SELECT sales_id FROM projects WHERE id=? FOR UPDATE",projectId);
+        require(project!=null && user.id.equals(str(project,"sales_id")),403,"担当営業が参画終了を登録できます。");
+        String student=text(body,"studentId");
+        Map<String,Object> entry=one(c,"""
+            SELECT min(entry_day) AS first_day, count(*) AS matches FROM (
+              SELECT event_date AS entry_day FROM scheduled_events WHERE project_id=? AND student_id=? AND kind='entry' AND engineer_confirmed_at IS NOT NULL AND schedule_state='scheduled'
+              UNION ALL SELECT entry_date FROM project_import_history WHERE project_id=? AND student_id=? AND status='joined'
+            ) dates
+            """,projectId,student,projectId,student);
+        require(((Number)entry.get("matches")).intValue()>0,409,"入場済みの面談者と案件を選んでください。");
+        Map<String,Object> previous=one(c,"SELECT ended_on,reason FROM placement_exits WHERE project_id=? AND student_id=?",projectId,student);
+        require(optionalText(body,"previousEnd").equals(previous==null?"":str(previous,"ended_on")) && optionalText(body,"previousReason").equals(previous==null?"":str(previous,"reason")),409,"参画終了情報が更新されました。一覧を更新してください。");
+        if(booleanField(body,"resume",false)) {
+            require(previous!=null,409,"この案件はすでに入場中です。");
+            execute(c,"DELETE FROM placement_exits WHERE project_id=? AND student_id=?",projectId,student);
+            return Map.of("message","入場中に戻しました。");
+        }
+        LocalDate ended;
+        try { ended=LocalDate.parse(text(body,"endedOn")); }
+        catch(DateTimeParseException ex){throw new ApiError(400,"参画終了日を年月日で指定してください。");}
+        require(!ended.isAfter(nowInJapan().toLocalDate()) && (entry.get("first_day")==null || !ended.isBefore(((java.sql.Date)entry.get("first_day")).toLocalDate())),400,"終了日は入場日以降、本日までの日付を指定してください。");
+        execute(c,"INSERT INTO placement_exits(project_id,student_id,ended_on,reason,updated_by) VALUES(?,?,?,?,?) ON CONFLICT(project_id,student_id) DO UPDATE SET ended_on=excluded.ended_on,reason=excluded.reason,updated_by=excluded.updated_by,updated_at=now()",
+                projectId,student,ended,boundedText(body,"reason",1000,false),user.id);
+        return Map.of("message","参画終了日を保存しました。案件は履歴から確認できます。");
+    }
+    private static Object remindResponse(Connection c,User user,String id,JsonNode body) throws Exception {
+        Map<String,Object> r=request(c,user,id,"sales");
+        checkResponseVersion(r,body.get("revision"));
+        require("requested".equals(r.get("status")),409,"未回答の面談依頼だけにリマインドできます。");
+        require(one(c,"UPDATE interview_requests SET last_reminded_at=now() WHERE id=? AND (last_reminded_at IS NULL OR last_reminded_at < now()-interval '1 minute') RETURNING id",id)!=null,409,"直前にリマインドしました。");
+        var result=preview(c,str(r,"project_id"),str(r,"student_id"),"lark","日程回答のリマインド",List.of(line("案件",str(r,"project_name")),line("担当営業",user.name)),"面談依頼から参加可能な日時を回答してください。");
+        return Map.of("message","本人の画面に日程回答のリマインドを表示しました。","preview",result);
+    }
     private static Object checkEntry(Connection c, User user, String eventId, JsonNode body) throws Exception {
         Map<String,Object> meeting = entryInterview(c, user, eventId);
         return Collections.singletonMap("entryWarning", entryWarning(c, user, meeting, entryTime(meeting, body)));
@@ -1418,14 +1760,21 @@ public final class DealHunterServer {
         String requestId=r==null?id("R-"):str(r,"id");
         if(r==null) execute(c,"INSERT INTO interview_requests(id,project_id,student_id,status,schedule_mode,requested_dates,interview_round,total_rounds) VALUES(?,?,?,'requested',?,?::date[],?,?)",requestId,e.get("project_id"),e.get("student_id"),mode,datesArray(dates),round,planned);
         else execute(c,"UPDATE interview_requests SET status='requested',confirmed_slot_id=NULL,response_kind='none',response_note='',schedule_mode=?,requested_dates=?::date[],interview_round=?,total_rounds=?,task_revision=task_revision+1 WHERE id=?",mode,datesArray(dates),round,planned,requestId);
+        execute(c,"UPDATE interview_requests SET response_deadline=?,last_reminded_at=NULL WHERE id=?",responseDeadline(body),requestId);
         for(Slot slot:candidatesList) execute(c,"INSERT INTO candidate_slots(id,request_id,start_at,end_at,interview_round) VALUES(?,?,?,?,?)",id("S-"),requestId,slot.start,slot.end,round);
         execute(c,"UPDATE scheduled_events SET result='advanced',request_id=?,engineer_confirmed_at=NULL WHERE id=?",requestId,eventId);
         var p=preview(c,str(e,"project_id"),str(e,"student_id"),"lark","次回面談の依頼",List.of(line("案件",str(e,"project_name")),line("面談者",str(e,"person")),line("面談回数",round+"/"+planned),line(availability?"日程の確認":"候補日時",scheduleLabel(mode,dates,candidatesList)),line("面談ページ","http://127.0.0.1:3100/engineer?request="+requestId)),"前回の面談を通過しました。次回の参加可能な日時を回答してください。外部送信は行っていません。");
         return Map.of("message","面談通過と次回の依頼を保存しました。","projectId",str(e,"project_id"),"requestId",requestId,"round",round,"totalRounds",planned,"preview",p);
     }
 
-    private static Object acknowledgeEvent(Connection c, User user, String eventId) throws SQLException {
+    private static Object acknowledgeEvent(Connection c, User user, String eventId, JsonNode body) throws SQLException {
         Map<String,Object> e=ownedEvent(c,user,eventId,"student");
+        if("entry".equals(e.get("kind")) && e.get("engineer_confirmed_at")==null) {
+            if(body.has("revision")) noticeVersion(e,body);
+            else require(((Number)e.get("notice_revision")).longValue()==1,409,"入場案内が更新されました。最新の内容を確認してください。");
+            require("scheduled".equals(e.get("schedule_state")),409,"延期・中止の入場は完了できません。");
+            require(!eventMoment(e,false).isAfter(LocalDateTime.now(ZoneId.of("Asia/Tokyo"))),409,"集合時刻を過ぎてから、実際の入場完了を報告してください。");
+        }
         require(str(e,"kind").equals("entry") || (str(e,"kind").equals("meet")
             && List.of("passed","rejected","advanced","offered","declined").contains(str(e,"result"))),
             409,"面談結果が確定してから確認してください。");
@@ -1522,7 +1871,7 @@ public final class DealHunterServer {
             require(exchange.getRequestMethod().equals("POST"), 405, "POSTで検索してください。");
             LocalDateTime now = LocalDateTime.now(japan);
             window = availabilityInterval(readBody(exchange, 4096), now, now.toLocalDate().plusDays(13));
-            try (PreparedStatement query = prepared(c, "SELECT id,COALESCE(email,'') FROM app_users WHERE role='student' ORDER BY id");
+            try (PreparedStatement query = prepared(c, "SELECT id,COALESCE(email,'') FROM app_users WHERE role='student' AND enabled ORDER BY id");
                  ResultSet rows = query.executeQuery()) {
                 while (rows.next()) emails.put(rows.getString(1), rows.getString(2));
             }
@@ -1553,7 +1902,7 @@ public final class DealHunterServer {
                 WHEN m.overlaps THEN 'booked'
                 WHEN m.student_id IS NOT NULL THEN 'unknownEnd' END AS conflict
             FROM app_users u LEFT JOIN meetings m ON m.student_id=u.id
-            WHERE u.role='student' ORDER BY u.id
+            WHERE u.role='student' AND u.enabled ORDER BY u.id
             """;
         List<String> matches = new ArrayList<>();
         Map<String,Integer> counts = new HashMap<>(Map.of("busy",0,"unavailable",0,"booked",0,"unknownEnd",0));
@@ -1612,7 +1961,7 @@ public final class DealHunterServer {
             }
             try(Connection c=connect()) {
                 // Checks following a writer lock must see the preceding writer's commit.
-                if (path.startsWith("/api/request-drafts") || path.equals("/api/requests") || (method.equals("POST") && (path.matches("/api/events/[^/]+/entry") ||
+                if (path.startsWith("/api/request-drafts") || path.equals("/api/requests") || (method.equals("POST") && (path.matches("/api/events/[^/]+/(entry|entry-change|notice)") || path.matches("/api/projects/[A-Za-z0-9_-]+/exit") || path.matches("/api/requests/[^/]+/confirm") || path.equals("/api/requests/group-confirm") ||
                         path.matches("/api/interviewer-availability/[A-Za-z0-9_-]+") ||
                         path.matches("/api/interviewer-company-restrictions/[A-Za-z0-9_-]+")))) {
                     c.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
@@ -1624,10 +1973,10 @@ public final class DealHunterServer {
                         Object response=demoLoginAccounts(c);
                         c.commit(); respond(exchange,200,response); return;
                     }
-                    if(path.equals("/api/auth/register") || path.equals("/api/auth/login")) {
+                    if(path.equals("/api/auth/register") || path.equals("/api/auth/login") || path.equals("/api/auth/reset-password")) {
                         require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
                         JsonNode body=readBody(exchange,16*1024);
-                        Object response=path.endsWith("/register")?registerUser(c,body):loginUser(c,body);
+                        Object response=path.endsWith("/register")?registerUser(c,body):path.endsWith("/reset-password")?resetPassword(c,body):loginUser(c,body);
                         c.commit(); respond(exchange,200,response); return;
                     }
                     if(path.matches("/api/auth/users/[A-Za-z0-9_-]+")) {
@@ -1635,7 +1984,7 @@ public final class DealHunterServer {
                         Object response=currentUser(c,path.split("/")[4]);
                         c.commit(); respond(exchange,200,response); return;
                     }
-                    boolean adminUpdate=path.matches("/api/admin/users/[A-Za-z0-9_-]+") && method.equals("POST");
+                    boolean adminUpdate=(path.startsWith("/api/admin/users") || path.startsWith("/api/admin/projects/")) && method.equals("POST");
                     // Hold a shared lock for each user-scoped transaction. An
                     // account edit waits for active operations and then blocks
                     // stale-role operations until the change commits.
@@ -1659,9 +2008,9 @@ public final class DealHunterServer {
                         c.commit(); respond(exchange,200,Map.of("matches",matches)); return;
                     }
                     if(path.equals("/api/question-groups")) {
-                        role(user,"sales");
+                        require(user.role.equals("sales") || user.role.equals("student"),403,"この質問集を表示できません。");
                         require(method.equals("GET"),405,"GET を使用してください。");
-                        Object response=Map.of("groups",SimilarProjects.questionGroups(c));
+                        Object response=Map.of("groups",SimilarProjects.questionGroups(c,user.role.equals("student")?user.id:null));
                         c.commit(); respond(exchange,200,response); return;
                     }
                     if(path.matches("/api/interviewer-availability/[A-Za-z0-9_-]+")) {
@@ -1691,6 +2040,11 @@ public final class DealHunterServer {
                         Object response=engineerInterviewHistory(c,user,path.split("/")[3]);
                         c.commit(); respond(exchange,200,response); return;
                     }
+                    if(path.matches("/api/recruitments/[A-Za-z0-9_-]+/company-warnings")) {
+                        require(method.equals("GET"),405,"GET を使用してください。");
+                        var warnings=recruitmentWarnings(c,user,path.split("/")[3]);
+                        c.commit(); respond(exchange,200,Map.of("warnings",warnings)); return;
+                    }
                     if(path.equals("/api/interviewer-company-lookup")) {
                         role(user,"sales");
                         require(method.equals("GET"),405,"GET を使用してください。");
@@ -1707,8 +2061,8 @@ public final class DealHunterServer {
                         role(user,"admin");
                         Object response;
                         if(path.equals("/api/admin/users")) {
-                            require(method.equals("GET"),405,"このエンドポイントではGETを使用してください。");
-                            response=listUsers(c,user);
+                            require(Set.of("GET","POST").contains(method),405,"このエンドポイントではGETを使用してください。");
+                            response=method.equals("POST")?issueAccessCode(c,user,readBody(exchange,16*1024)):listUsers(c,user);
                         } else {
                             require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
                             response=updateUser(c,user,path.split("/")[4],readBody(exchange,16*1024));
@@ -1739,19 +2093,24 @@ public final class DealHunterServer {
                         require(!user.role.equals("admin"),403,"業務画面は営業・エンジニア・リーダーが利用できます。");
                         require(method.equals("GET"),405,"このエンドポイントではGETを使用してください。");
                         Map<String,Object> row=one(c,dashboardSql,user.id);
-                        respond(exchange,200,JSON.readTree(row.values().iterator().next().toString())); return;
+                        ObjectNode dashboard=(ObjectNode)JSON.readTree(row.values().iterator().next().toString());
+                        dashboard.put("allowEarlyFeedback", EARLY_FEEDBACK);
+                        respond(exchange,200,dashboard); return;
                     }
                     if(path.matches("/api/requests/[^/]+/attachment") && method.equals("GET")) {
                         downloadAttachment(c,user,path.split("/")[3],exchange); c.commit(); return;
                     }
-                    require(path.equals("/api/requests") || path.equals("/api/requests/group-confirm") || path.matches("/api/requests/[^/]+/(respond|confirm|reopen|cancel)")
-                        || path.matches("/api/requests/[^/]+/attachment") || assignmentRoute || recruitmentCancellationRoute || path.matches("/api/events/[^/]+/(feedback|entry|entry-check|acknowledge|result|next-round|notice|notice-read)") || path.matches("/api/tasks/[^/]+/acknowledge"),404,"エンドポイントが見つかりません。");
+                    require(path.equals("/api/requests") || path.equals("/api/requests/group-confirm") || path.matches("/api/projects/[A-Za-z0-9_-]+/exit") || path.matches("/api/requests/[^/]+/(respond|confirm|reopen|cancel|remind)")
+                        || path.matches("/api/requests/[^/]+/attachment") || assignmentRoute || recruitmentCancellationRoute || path.matches("/api/events/[^/]+/(feedback|feedback-draft|entry|entry-check|entry-change|acknowledge|result|next-round|notice|notice-read)") || path.matches("/api/tasks/[^/]+/acknowledge"),404,"エンドポイントが見つかりません。");
                     require(method.equals("POST"),405,"このエンドポイントではPOSTを使用してください。");
                     JsonNode body=readBody(exchange,8*1024*1024);
                     Object response;
                     String[] parts=path.split("/");
                     if(path.equals("/api/requests")) response=createRequest(c,user,body);
                     else if(path.equals("/api/requests/group-confirm")) response=groupConfirm(c,user,body);
+                    else if(path.matches("/api/projects/[A-Za-z0-9_-]+/exit")) response=changePlacementExit(c,user,parts[3],body);
+                    else if(path.matches("/api/events/[^/]+/entry-change")) response=changeEntry(c,user,parts[3],body);
+                    else if(path.matches("/api/requests/[^/]+/remind")) response=remindResponse(c,user,parts[3],body);
                     else if(recruitmentCancellationRoute) response=cancelRecruitment(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("recruitments") && parts[4].equals("assign")) response=assignRecruitment(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("cancel")) response=cancelInterviewRequest(c,user,parts[3],body);
@@ -1760,13 +2119,14 @@ public final class DealHunterServer {
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("reopen")) response=reopenRequest(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("requests") && parts[4].equals("attachment")) response=saveAttachment(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("feedback")) response=submitFeedback(c,user,parts[3],body);
+                    else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("feedback-draft")) response=saveFeedbackDraft(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("notice")) response=editNotice(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("notice-read")) response=readNotice(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("entry")) response=registerEntry(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("entry-check")) response=checkEntry(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("result")) response=recordResult(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("next-round")) response=nextRound(c,user,parts[3],body);
-                    else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("acknowledge")) response=acknowledgeEvent(c,user,parts[3]);
+                    else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("events") && parts[4].equals("acknowledge")) response=acknowledgeEvent(c,user,parts[3],body);
                     else if(parts.length==5 && parts[1].equals("api") && parts[2].equals("tasks") && parts[4].equals("acknowledge")) response=acknowledgeTask(c,user,parts[3],body);
                     else throw new ApiError(404,"エンドポイントが見つかりません。");
                     c.commit();

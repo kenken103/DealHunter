@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -27,11 +28,12 @@ async function call(actor, endpoint, body, status = 200) {
 }
 const dashboard = actor => call(actor, "dashboard");
 const sales = "sales-aoki", student = "student-takahashi", outsider = "student-yamamoto", leader = "leader-sato";
+const { code } = await call("admin-initial", "admin/users", { purpose: "invite", email: "sales-sharing@legarea.jp", role: "sales" });
 const { user: { id: owner } } = await call(null, "auth/register", {
-  name: "共有テスト担当営業", email: "sales-sharing@legarea.jp", password: randomUUID(), role: "sales",
+  code, name: "共有テスト担当営業", email: "sales-sharing@legarea.jp", password: randomUUID(), role: "sales",
 });
 assert.equal((await dashboard(sales)).projects.length, 0, "Fresh database required");
-const when = "2032-01-10T13:00";
+const when = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10) + "T13:00";
 const makeAttachment = (name, text) => ({ name, contentBase64: Buffer.from(text).toString("base64") });
 async function createAnswered(actor, project) {
   const created = await call(actor, "requests", {
@@ -84,13 +86,18 @@ await call(owner, sheet, makeAttachment("更新済み.pdf", "updated skill sheet
 assert.equal(await readSheet(sales), "updated skill sheet");
 const confirmed = await call(owner, requestRoute + "confirm", {slotId:project.slotId, url:"https://meet.example/shared"});
 const eventRoute = "events/" + confirmed.eventId + "/";
-const feedback = { duties:"試験設計", process:"レビュー", remote:"週2日", impression:"チームで工程を確認", questions:["どの工程を担当しましたか"] };
+const feedback = { duties:"試験設計", process:"レビュー", remote:"週2日", impression:"チームで工程を確認", questions:["どの工程を担当しましたか"], meetingFinished:true };
 const beforeFeedback = await dashboard(owner);
 for (const actor of [sales, owner, outsider]) await call(actor, eventRoute + "feedback", feedback, 403);
 await call(sales, eventRoute + "result", {result:"offered"}, 403);
 await call(sales, eventRoute + "notice", {}, 403);
 await call(sales, eventRoute + "next-round", {}, 403);
 assert.deepEqual(await dashboard(sales), beforeFeedback);
+await call(student, eventRoute + "feedback", feedback, 409);
+execFileSync(path.join(manifest.postgresBin, "psql.exe"), [
+  "-XqAt", "-h", "127.0.0.1", "-p", String(manifest.postgresPort), "-U", "dealhunter", "-d", "dealhunter_end_companies_test",
+  "-v", "ON_ERROR_STOP=1", "-v", "event=" + confirmed.eventId, "-f", "-",
+], { input: "UPDATE scheduled_events SET event_date=CURRENT_DATE-1 WHERE id=:'event';", windowsHide: true });
 await call(student, eventRoute + "feedback", feedback);
 const after = await dashboard(sales);
 assert(after.feedbacks.some(f => f.eventId === confirmed.eventId && f.impression === feedback.impression));

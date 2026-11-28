@@ -72,6 +72,7 @@ export function SimilarProjectReview({ notice, checking, onRetry, onEdit, onCont
           <h4>登録済みの面談概要</h4>
           <p className="sales-preserve-lines">{match.summary}</p>
         </details>
+        <a className="text-link" target="_blank" rel="noopener noreferrer" href={"/sales?view=cases&project=" + encodeURIComponent(match.projectId)}>案件詳細を別タブで開く</a>
       </li>)}
     </ol>
     <div className="sales-dialog-actions">

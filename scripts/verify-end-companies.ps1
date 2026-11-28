@@ -10,6 +10,7 @@ param(
     [switch]$SimilarProjects,
     [switch]$SalesSharing,
     [switch]$EngineerStatus,
+    [switch]$EngineerFeedback,
     [switch]$RequestDrafts,
     [switch]$RequestCancellation,
     [switch]$ProjectDeletion,
@@ -186,6 +187,10 @@ try {
         Start-TestJava
         & node (Join-Path $projectRoot 'backend/verify-project-deletion.mjs')
         if ($LASTEXITCODE -ne 0) { throw 'Project deletion verification failed.' }
+    } elseif ($EngineerFeedback) {
+        Start-TestJava
+        & node (Join-Path $projectRoot 'backend/verify-engineer-feedback.mjs')
+        if ($LASTEXITCODE -ne 0) { throw 'Engineer feedback and entry verification failed.' }
     } elseif ($EngineerStatus) {
         Start-TestJava
         & node (Join-Path $projectRoot 'backend/verify-engineer-status.mjs')

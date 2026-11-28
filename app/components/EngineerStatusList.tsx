@@ -1,5 +1,6 @@
 "use client";
 
+import { useScreenParam } from "./screen-params";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState, type MouseEvent } from "react";
 import { companyNameForDisplay } from "../lib/company-name";
@@ -60,14 +61,14 @@ function ProjectDetails({ engineer, project, onClose }: SelectedProject & { onCl
   </dialog>;
 }
 
-function EngineerNameLink({ engineer }: { engineer: Engineer }) {
-  return <Link className="engineer-status-name-link" href={engineerHistoryLink(engineer.id)} prefetch={false} title={`${engineer.name}の面談履歴`}>
+function EngineerNameLink({ engineer, query }: { engineer: Engineer; query: string }) {
+  return <Link className="engineer-status-name-link" href={engineerHistoryLink(engineer.id, query)} id={"engineer-" + engineer.id} prefetch={false} title={`${engineer.name}の面談履歴`}>
     {engineer.name}
   </Link>;
 }
 
 export default function EngineerStatusList({ role }: { role: Role }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useScreenParam("engineerQuery");
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<LoadResult>();
   const [selected, setSelected] = useState<SelectedProject | null>(null);
@@ -103,6 +104,14 @@ export default function EngineerStatusList({ role }: { role: Role }) {
 
   const current = result?.role === role && result.attempt === attempt ? result : undefined;
   const engineers = current && "engineers" in current ? current.engineers : undefined;
+  const restored = useRef(false);
+  useEffect(() => {
+    if (!engineers || restored.current || !window.location.hash.startsWith("#engineer-")) return;
+    restored.current = true;
+    const anchor = document.getElementById(window.location.hash.slice(1));
+    anchor?.scrollIntoView({ block: "nearest" });
+    anchor?.focus({ preventScroll: true });
+  }, [engineers]);
   const needle = searchText(query);
   const visible = (engineers ?? []).flatMap(engineer => {
     if (!needle || searchText(engineer.name).includes(needle)) return [engineer];
@@ -125,18 +134,18 @@ export default function EngineerStatusList({ role }: { role: Role }) {
         <thead><tr><th scope="col">面談者名</th><th scope="col">参画案件名</th><th scope="col">参画者名</th><th scope="col">上位会社</th><th scope="col">入場日</th></tr></thead>
         {visible.map(engineer => <tbody key={engineer.id}>
           {engineer.projects.length ? engineer.projects.map((project, index) => <tr className="engineer-status-active-row" key={project.id}>
-            {index === 0 && <th scope="rowgroup" rowSpan={engineer.projects.length}><EngineerNameLink engineer={engineer} /></th>}
+            {index === 0 && <th scope="rowgroup" rowSpan={engineer.projects.length}><EngineerNameLink engineer={engineer} query={query} /></th>}
             <td><button type="button" className="engineer-status-project" aria-haspopup="dialog"
               aria-label={engineer.name + "の案件詳細：" + project.name} onClick={event => {
                 opener.current = event.currentTarget;
                 setSelected({ engineer, project });
               }}><span>{project.name}</span><svg className="icon" aria-hidden="true"><use href="/icons.svg#i-chevright" /></svg></button></td>
-            <td>{project.participantName || "未登録"}</td>
-            <td>{companyNameForDisplay(project.upperCompany) || "未登録"}</td>
-            <td className="engineer-status-date">{project.entryDate
+            <td data-label="参画者">{project.participantName || "未登録"}</td>
+            <td data-label="上位会社">{companyNameForDisplay(project.upperCompany) || "未登録"}</td>
+            <td data-label="入場日" className="engineer-status-date">{project.entryDate
               ? <time dateTime={project.entryDate}>{project.entryDate}</time>
               : <span className="engineer-status-unassigned">未登録</span>}</td>
-          </tr>) : <tr><th scope="row"><EngineerNameLink engineer={engineer} /></th><td className="engineer-status-unassigned">参画中の案件なし</td><td className="engineer-status-unassigned">―</td><td className="engineer-status-unassigned">―</td><td className="engineer-status-unassigned">―</td></tr>}
+          </tr>) : <tr><th scope="row"><EngineerNameLink engineer={engineer} query={query} /></th><td className="engineer-status-unassigned">参画中の案件なし</td><td className="engineer-status-unassigned">―</td><td className="engineer-status-unassigned">―</td><td className="engineer-status-unassigned">―</td></tr>}
         </tbody>)}
       </table></div>}
     {selected && <ProjectDetails {...selected} onClose={() => {

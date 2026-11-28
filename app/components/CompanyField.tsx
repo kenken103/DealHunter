@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from "react";
-import { trimEndCompany as trimCompanyName } from "../lib/company-name";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { companyComparisonKey, trimEndCompany as trimCompanyName, uniqueCompanyNames } from "../lib/company-name";
 import { loadCompanyCandidates } from "../lib/interviewer-companies";
 import "./end-company-field.css";
 
@@ -40,21 +40,24 @@ function CandidateStatus({ state, retry, addingNew, id }: {
   </p>;
 }
 
-function CompanyField({ name, required = false, value, onChange, addingNew, onAddingNewChange, knownCompanies,
+export function CompanyField({ name, required = false, value, onChange, addingNew, onAddingNewChange, knownCompanies,
   className = "d-label", describedBy, children }: FieldProps & {
     name: "upperCompany" | "endCompany"; required?: boolean; className?: string; describedBy?: string; children?: ReactNode;
   }) {
   const id = useId();
+  const selectionRef = useRef<HTMLSelectElement>(null);
   const label = name === "upperCompany" ? "上位会社" : "エンド企業";
   // Only the select key is trimmed. An untouched legacy project retains its raw value.
   const selectedName = addingNew ? "" : trimCompanyName(value);
-  const options = [...new Set([...knownCompanies, selectedName].map(trimCompanyName).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja"));
+  const options = uniqueCompanyNames([selectedName, ...knownCompanies]).sort((a, b) => a.localeCompare(b, "ja"));
+  const duplicate = addingNew && options.find(company => companyComparisonKey(company) === companyComparisonKey(value));
+  const duplicateMessage = duplicate ? `既存候補「${duplicate}」と同じ表記として扱われます。別法人の場合は会社名に所在地などの識別情報を加えてください。` : "";
   const emptyValue = required ? "" : "none";
   const selection = addingNew ? "new" : selectedName ? `company:${selectedName}` : emptyValue;
 
   return <div className={`end-company-field ${className}`}>
     <label htmlFor={`${id}-selection`}>{label}（{required ? "必須" : "任意"}）</label>
-    <select id={`${id}-selection`} name={`${name}Selection`} value={selection} required={required} aria-describedby={describedBy} onChange={event => {
+    <select ref={selectionRef} id={`${id}-selection`} name={`${name}Selection`} value={selection} required={required} aria-describedby={describedBy} onChange={event => {
       const selected = event.currentTarget.value;
       onAddingNewChange(selected === "new");
       onChange(selected.startsWith("company:") ? selected.slice(8) : "");
@@ -67,7 +70,14 @@ function CompanyField({ name, required = false, value, onChange, addingNew, onAd
     </select>
     {addingNew ? <>
       <label htmlFor={`${id}-new`}>新しい{label}名</label>
-      <input id={`${id}-new`} name={name} value={value} required={required} maxLength={200} placeholder="会社名を入力" aria-describedby={describedBy} onChange={event => onChange(event.currentTarget.value)} />
+      <input id={`${id}-new`} name={name} value={value} required={required} maxLength={200} placeholder="会社名を入力"
+        ref={input => { input?.setCustomValidity(duplicateMessage); }}
+        aria-invalid={duplicate ? true : undefined} aria-describedby={[describedBy, duplicate ? `${id}-duplicate` : ""].filter(Boolean).join(" ") || undefined}
+        onChange={event => onChange(event.currentTarget.value)} />
+      {duplicate && <div className="end-company-help" role="status"><span id={`${id}-duplicate`}>{duplicateMessage}</span>
+        <button type="button" className="text-link" onClick={() => {
+          onAddingNewChange(false); onChange(duplicate); selectionRef.current?.focus();
+        }}>既存候補「{duplicate}」を使用</button></div>}
     </> : <input type="hidden" name={name} value={value} />}
     {children}
   </div>;
@@ -79,23 +89,8 @@ export function SalesCompanyFields({ upper, end }: { upper: FieldProps; end: Fie
   const adding = upper.addingNew || end.addingNew;
   const describedBy = state !== "ready" || adding ? statusId : undefined;
   return <div className="sales-company-fields">
-    <CompanyField name="upperCompany" required {...upper} knownCompanies={[...upper.knownCompanies, ...(data?.upper ?? [])]} describedBy={describedBy} />
-    <CompanyField name="endCompany" {...end} knownCompanies={[...end.knownCompanies, ...(data?.end ?? [])]} describedBy={describedBy} />
+    <CompanyField name="upperCompany" required {...upper} knownCompanies={[...(data?.upper ?? []), ...upper.knownCompanies]} describedBy={describedBy} />
+    <CompanyField name="endCompany" {...end} knownCompanies={[...(data?.end ?? []), ...end.knownCompanies]} describedBy={describedBy} />
     <CandidateStatus state={state} retry={retry} addingNew={adding} id={statusId} />
   </div>;
-}
-
-async function loadEndCompanies(signal: AbortSignal): Promise<string[]> {
-  const response = await fetch("/api/end-companies", { cache: "no-store", signal });
-  const result = await response.json() as { endCompanies?: unknown };
-  if (!response.ok || !Array.isArray(result.endCompanies) || !result.endCompanies.every(name => typeof name === "string")) throw new Error("エンド企業の候補を取得できませんでした。");
-  return result.endCompanies;
-}
-
-export function AdminEndCompanyField(props: FieldProps & { className?: string }) {
-  const { data, state, retry } = useCandidates(loadEndCompanies);
-  const statusId = useId();
-  return <CompanyField name="endCompany" {...props} knownCompanies={[...props.knownCompanies, ...(data ?? [])]} describedBy={state !== "ready" || props.addingNew ? statusId : undefined}>
-    <CandidateStatus state={state} retry={retry} addingNew={props.addingNew} id={statusId} />
-  </CompanyField>;
 }
